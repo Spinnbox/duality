@@ -585,7 +585,19 @@ namespace Duality.Editor
 						if (File.Exists(oldPath) && !File.Exists(newPath))
 						{
 							Directory.CreateDirectory(Path.GetDirectoryName(newPath));
-							File.Move(oldPath, newPath);
+							try
+							{
+								File.Move(oldPath, newPath);
+							}
+							catch (IOException exception)
+							{
+								Logs.Editor.WriteWarning(
+									"Unable to move source media file '{0}' to '{1}' ({2}). Copying the file instead.",
+									oldPath,
+									newPath,
+									exception.Message);
+								File.Copy(oldPath, newPath);
+							}
 							PathHelper.DeleteEmptyDirectory(Path.GetDirectoryName(oldPath), true);
 						}
 					}
@@ -609,7 +621,19 @@ namespace Duality.Editor
 					if (Directory.Exists(oldMediaPath) && !Directory.Exists(newMediaPath))
 					{
 						Directory.CreateDirectory(Path.GetDirectoryName(newMediaPath));
-						Directory.Move(oldMediaPath, newMediaPath);
+						try
+						{
+							Directory.Move(oldMediaPath, newMediaPath);
+						}
+						catch (IOException exception)
+						{
+							Logs.Editor.WriteWarning(
+								"Unable to move source media directory '{0}' to '{1}' ({2}). Copying the directory instead.",
+								oldMediaPath,
+								newMediaPath,
+								exception.Message);
+							PathHelper.CopyDirectory(oldMediaPath, newMediaPath);
+						}
 						PathHelper.DeleteEmptyDirectory(Path.GetDirectoryName(oldMediaPath), true);
 					}
 				}
