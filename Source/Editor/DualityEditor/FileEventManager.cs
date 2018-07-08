@@ -23,41 +23,59 @@ namespace Duality.Editor
 {
 	public static class FileEventManager
 	{
-		private class DeletedEventArgsExt : FileSystemEventArgs
-		{
-			private bool isDirectory = false;
-			public bool IsDirectory
-			{
-				get { return this.isDirectory; }
-			}
-			public bool IsFile
-			{
-				get { return !this.isDirectory; }
-			}
-			public DeletedEventArgsExt(WatcherChangeTypes changeTypes, string directory, string name, bool isDir) : base(changeTypes, directory, name)
-			{
-				this.isDirectory = isDir;
-			}
-		}
-		private struct FileEvent
+		private struct FileEvent : IEquatable<FileEvent>
 		{
 			public string Path;
 			public string OldPath;
 			public bool IsDirectory;
 			public WatcherChangeTypes ChangeType;
+
+			public bool IsEmpty
+			{
+				get { return this.Path == null; }
+			}
+
+			public bool Equals(FileEvent other)
+			{
+				return
+					this.Path == other.Path &&
+					this.OldPath == other.OldPath &&
+					this.IsDirectory == other.IsDirectory &&
+					this.ChangeType == other.ChangeType;
+			}
+			public override bool Equals(object obj)
+			{
+				if (obj is FileEvent)
+					return this.Equals((FileEvent)obj);
+				else
+					return false;
+			}
+			public override int GetHashCode()
+			{
+				int hash = 17;
+				MathF.CombineHashCode(ref hash, this.Path != null ? this.Path.GetHashCode() : 0);
+				MathF.CombineHashCode(ref hash, this.OldPath != null ? this.OldPath.GetHashCode() : 0);
+				MathF.CombineHashCode(ref hash, this.IsDirectory ? 23 : 0);
+				MathF.CombineHashCode(ref hash, (int)this.ChangeType);
+				return hash;
+			}
+			public override string ToString()
+			{
+				return string.Format("{0} '{1}'", this.ChangeType, this.Path);
+			}
 		}
 
-		private	static DateTime                  lastEventProc           = DateTime.Now;
-		private static FileSystemWatcher         pluginWatcherWorking    = null;
-		private static FileSystemWatcher         pluginWatcherExec       = null;
-		private static FileSystemWatcher         dataDirWatcherFile      = null;
-		private static FileSystemWatcher         dataDirWatcherDirectory = null;
-		private static FileSystemWatcher         sourceDirWatcher        = null;
-		private	static HashSet<string>           reimportSchedule        = new HashSet<string>();
-		private	static HashSet<string>           editorModifiedFiles     = new HashSet<string>();
-		private	static HashSet<string>           editorModifiedFilesLast = new HashSet<string>();
-		private	static List<FileSystemEventArgs> dataDirEventBuffer      = new List<FileSystemEventArgs>();
-		private	static List<FileSystemEventArgs> sourceDirEventBuffer    = new List<FileSystemEventArgs>();
+		private static DateTime          lastEventProc           = DateTime.Now;
+		private static FileSystemWatcher pluginWatcherWorking    = null;
+		private static FileSystemWatcher pluginWatcherExec       = null;
+		private static FileSystemWatcher dataDirWatcherFile      = null;
+		private static FileSystemWatcher dataDirWatcherDirectory = null;
+		private static FileSystemWatcher sourceDirWatcher        = null;
+		private static HashSet<string>   reimportSchedule        = new HashSet<string>();
+		private static HashSet<string>   editorModifiedFiles     = new HashSet<string>();
+		private static HashSet<string>   editorModifiedFilesLast = new HashSet<string>();
+		private static List<FileEvent>   dataDirEventBuffer      = new List<FileEvent>();
+		private static List<FileEvent>   sourceDirEventBuffer    = new List<FileEvent>();
 
 
 		public static event EventHandler<ResourceEventArgs>          ResourceCreated   = null;
@@ -181,92 +199,81 @@ namespace Duality.Editor
 		}
 
 
-		private static FileSystemEventArgs FetchFileSystemEvent(List<FileSystemEventArgs> dirEventList, string basePath)
+		private static bool TryFetchFileSystemEvent(List<FileEvent> dirEventList, string basePath, out FileEvent result)
 		{
-			if (dirEventList.Count == 0) return null;
+			result = default(FileEvent);
+			if (dirEventList.Count == 0) return false;
 
-			FileSystemEventArgs	current	= dirEventList[0];
+			FileEvent current = dirEventList[0];
 			dirEventList.RemoveAt(0);
 
 			// Discard or pack rename-rename
 			if (current.ChangeType == WatcherChangeTypes.Renamed)
 			{
-				RenamedEventArgs rename = current as RenamedEventArgs;
-
-				while (rename != null)
+				while (true)
 				{
-					RenamedEventArgs renameB = dirEventList.OfType<RenamedEventArgs>().FirstOrDefault(e => 
-						Path.GetFileName(e.OldFullPath) == Path.GetFileName(rename.FullPath));
-					if (renameB != null)
+					int secondRenameIndex = dirEventList.FindIndex(e =>
+						e.ChangeType == WatcherChangeTypes.Renamed &&
+						Path.GetFileName(e.OldPath) == Path.GetFileName(current.Path));
+					if (secondRenameIndex != -1)
 					{
-						dirEventList.Remove(renameB);
-						rename = new RenamedEventArgs(WatcherChangeTypes.Renamed, basePath, renameB.Name, rename.OldName);
-						current = rename;
+						FileEvent secondRename = dirEventList[secondRenameIndex];
+						dirEventList.RemoveAt(secondRenameIndex);
+						current.Path = secondRename.Path;
 					}
 					else break;
 				}
 
 				// Discard useless renames
-				if (rename.OldFullPath == rename.FullPath) return null;
+				if (current.OldPath == current.Path) return false;
 			}
 
 			// Pack del-rename to change
 			if (current.ChangeType == WatcherChangeTypes.Deleted)
 			{
-				FileSystemEventArgs del		= current;
-				RenamedEventArgs	rename	= null;
-				
-				rename = dirEventList.OfType<RenamedEventArgs>().FirstOrDefault(e => e.FullPath == del.FullPath);
-				dirEventList.Remove(rename);
+				int renameIndex = dirEventList.FindIndex(e =>
+					e.ChangeType == WatcherChangeTypes.Renamed &&
+					e.Path == current.Path);
+				if (renameIndex != -1)
+				{
+					FileEvent rename = dirEventList[renameIndex];
+					dirEventList.RemoveAt(renameIndex);
 
-				if (del != null && rename != null) return new FileSystemEventArgs(WatcherChangeTypes.Changed, basePath, del.Name);
+					current.ChangeType = WatcherChangeTypes.Changed;
+				}
 			}
 
 			// Pack del-create to rename
 			if (current.ChangeType == WatcherChangeTypes.Deleted)
 			{
-				FileSystemEventArgs del		= current;
-				FileSystemEventArgs create	= null;
+				int createIndex = dirEventList.FindIndex(e =>
+					e.ChangeType == WatcherChangeTypes.Created &&
+					Path.GetFileName(e.Path) == Path.GetFileName(current.Path));
+				if (createIndex != -1)
+				{
+					FileEvent create = dirEventList[createIndex];
+					dirEventList.RemoveAt(createIndex);
 
-				create = dirEventList.FirstOrDefault(e => 
-					e.ChangeType == WatcherChangeTypes.Created && 
-					Path.GetFileName(e.FullPath) == Path.GetFileName(del.FullPath));
-				dirEventList.Remove(create);
-
-				if (del != null && create != null) return new RenamedEventArgs(WatcherChangeTypes.Renamed, basePath, create.Name, del.Name);
+					current.ChangeType = WatcherChangeTypes.Renamed;
+					current.OldPath = current.Path;
+					current.Path = create.Path;
+				}
 			}
 			
-			return current;
+			result = current;
+			return true;
 		}
-		private static void GatherFileSystemEvents(List<FileSystemEventArgs> watcherEvents, string basePath, out List<FileEvent> eventList)
+		private static void GatherFileSystemEvents(List<FileEvent> watcherEvents, string basePath, out List<FileEvent> eventList)
 		{
 			eventList = null;
 			while (watcherEvents.Count > 0)
 			{
-				FileSystemEventArgs e = FetchFileSystemEvent(watcherEvents, basePath);
-				if (e == null) continue;
+				FileEvent fileEvent;
+				if (!TryFetchFileSystemEvent(watcherEvents, basePath, out fileEvent)) continue;
 
 				// Ignore stuff saved by the editor itself
-				if (e.ChangeType == WatcherChangeTypes.Changed && IsPathEditorModified(e.FullPath))
+				if (fileEvent.ChangeType == WatcherChangeTypes.Changed && IsPathEditorModified(fileEvent.Path))
 					continue;
-
-				FileEvent fileEvent;
-				fileEvent.Path = e.FullPath;
-				fileEvent.ChangeType = e.ChangeType;
-
-				// Determine whether we're dealing with a directory
-				fileEvent.IsDirectory = Directory.Exists(e.FullPath);
-				{
-					// If this is a deletion, nothing exists anymore, rely on metadata instead.
-					DeletedEventArgsExt de = e as DeletedEventArgsExt;
-					if (de != null && de.IsDirectory)
-						fileEvent.IsDirectory = true;
-				}
-
-				if (e is RenamedEventArgs)
-					fileEvent.OldPath = ((RenamedEventArgs)e).OldFullPath;
-				else
-					fileEvent.OldPath = fileEvent.Path;
 
 				if (eventList == null)
 					eventList = new List<FileEvent>();
@@ -275,19 +282,31 @@ namespace Duality.Editor
 			}
 		}
 
+		private static FileEvent TranslateFileEvent(FileSystemEventArgs watcherEvent, bool isDirectory)
+		{
+			FileEvent fileEvent;
+			fileEvent.Path = watcherEvent.FullPath;
+			fileEvent.IsDirectory = isDirectory;
+			fileEvent.ChangeType = watcherEvent.ChangeType;
+
+			if (watcherEvent is RenamedEventArgs)
+				fileEvent.OldPath = ((RenamedEventArgs)watcherEvent).OldFullPath;
+			else
+				fileEvent.OldPath = fileEvent.Path;
+
+			return fileEvent;
+		}
+
 		private static void PushDataDirEvent(FileSystemEventArgs e, bool isDirectory)
 		{
 			if (!PathHelper.IsPathVisible(e.FullPath)) return;
 
-			// In case we're dealing with a deletion, we'll need to add some meta information to know whether it was a file or directory.
-			if (e.ChangeType == WatcherChangeTypes.Deleted)
-			{
-				string baseDir = (e.Name.Length > 0) ? e.FullPath.Remove(e.FullPath.Length - e.Name.Length, e.Name.Length) : "";
-				e = new DeletedEventArgsExt(e.ChangeType, baseDir, e.Name, isDirectory);
-			}
+			// Translate the file system watcher event into out local event struct
+			FileEvent fileEvent = TranslateFileEvent(e, isDirectory);
 
-			dataDirEventBuffer.RemoveAll(f => f.FullPath == e.FullPath && f.ChangeType == e.ChangeType);
-			dataDirEventBuffer.Add(e);
+			// Aggregate all events of the same type for the same path into one event
+			dataDirEventBuffer.RemoveAll(f => f.Path == fileEvent.Path && f.ChangeType == fileEvent.ChangeType);
+			dataDirEventBuffer.Add(fileEvent);
 		}
 		private static void ProcessDataDirEvents()
 		{
@@ -479,8 +498,13 @@ namespace Duality.Editor
 		private static void PushSourceDirEvent(FileSystemEventArgs e)
 		{
 			if (!PathHelper.IsPathVisible(e.FullPath)) return;
-			sourceDirEventBuffer.RemoveAll(f => f.FullPath == e.FullPath && f.ChangeType == e.ChangeType);
-			sourceDirEventBuffer.Add(e);
+
+			// Translate the file system watcher event into out local event struct
+			FileEvent fileEvent = TranslateFileEvent(e, Directory.Exists(e.FullPath));
+
+			// Aggregate all events of the same type for the same path into one event
+			sourceDirEventBuffer.RemoveAll(f => f.Path == fileEvent.Path && f.ChangeType == fileEvent.ChangeType);
+			sourceDirEventBuffer.Add(fileEvent);
 		}
 		private static void ProcessSourceDirEvents()
 		{
@@ -657,7 +681,7 @@ namespace Duality.Editor
 
 		private static System.Collections.IEnumerable async_RenameContentRefs(ProcessingBigTaskDialog.WorkerInterface state)
 		{
-			var renameData = state.Data as List<ResourceRenamedEventArgs>;
+			List<FileEvent> renameData = (List<FileEvent>)state.Data;
 			int totalCounter = 0;
 			int fileCounter = 0;
 			
@@ -697,9 +721,9 @@ namespace Duality.Editor
 			}
 
 			// Rename in actual content
-			var targetResTypes = renameData.Any(e => e.IsDirectory) ? null : renameData.Select(e => e.ContentType).ToArray();
-			var loadedContent = ContentProvider.GetLoadedContent<Resource>();
-			var reloadContent = new List<IContentRef>();
+			Type[] targetResTypes = renameData.Any(e => e.IsDirectory) ? null : renameData.Select(e => new ContentRef<Resource>(e.Path).ResType).ToArray();
+			List<ContentRef<Resource>> loadedContent = ContentProvider.GetLoadedContent<Resource>();
+			List<IContentRef> reloadContent = new List<IContentRef>();
 			string[] resFiles = Resource.GetResourceFiles().ToArray();
 			List<Resource> modifiedRes = new List<Resource>();
 			foreach (string file in resFiles)
@@ -771,7 +795,7 @@ namespace Duality.Editor
 				DualityEditorApp.NotifyObjPropChanged(null, new ObjectSelection(modifiedRes));
 			}
 		}
-		private static int async_RenameContentRefs_Perform(object obj, List<ResourceRenamedEventArgs> args)
+		private static int async_RenameContentRefs_Perform(object obj, List<FileEvent> args)
 		{
 			int counter = 0;
 			ReflectionHelper.VisitObjectsDeep<IContentRef>(obj, r => 
@@ -780,9 +804,9 @@ namespace Duality.Editor
 				if (r.IsExplicitNull) return r;
 				if (string.IsNullOrEmpty(r.Path)) return r;
 
-				foreach (ResourceRenamedEventArgs e in args)
+				foreach (FileEvent e in args)
 				{
-					if (e.IsResource && r.Path == e.OldPath)
+					if (!e.IsDirectory && r.Path == e.OldPath)
 					{
 						r.Path = e.Path;
 						counter++;
