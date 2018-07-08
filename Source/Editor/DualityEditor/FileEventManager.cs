@@ -47,25 +47,25 @@ namespace Duality.Editor
 			public WatcherChangeTypes ChangeType;
 		}
 
-		private	static DateTime						lastEventProc			= DateTime.Now;
-		private static FileSystemWatcher			pluginWatcherWorking	= null;
-		private static FileSystemWatcher			pluginWatcherExec		= null;
-		private static FileSystemWatcher			dataDirWatcherFile		= null;
-		private static FileSystemWatcher			dataDirWatcherDirectory	= null;
-		private static FileSystemWatcher			sourceDirWatcher		= null;
-		private	static HashSet<string>				reimportSchedule		= new HashSet<string>();
-		private	static HashSet<string>				editorModifiedFiles		= new HashSet<string>();
-		private	static HashSet<string>				editorModifiedFilesLast	= new HashSet<string>();
-		private	static List<FileSystemEventArgs>	dataDirEventBuffer		= new List<FileSystemEventArgs>();
-		private	static List<FileSystemEventArgs>	sourceDirEventBuffer	= new List<FileSystemEventArgs>();
+		private	static DateTime                  lastEventProc           = DateTime.Now;
+		private static FileSystemWatcher         pluginWatcherWorking    = null;
+		private static FileSystemWatcher         pluginWatcherExec       = null;
+		private static FileSystemWatcher         dataDirWatcherFile      = null;
+		private static FileSystemWatcher         dataDirWatcherDirectory = null;
+		private static FileSystemWatcher         sourceDirWatcher        = null;
+		private	static HashSet<string>           reimportSchedule        = new HashSet<string>();
+		private	static HashSet<string>           editorModifiedFiles     = new HashSet<string>();
+		private	static HashSet<string>           editorModifiedFilesLast = new HashSet<string>();
+		private	static List<FileSystemEventArgs> dataDirEventBuffer      = new List<FileSystemEventArgs>();
+		private	static List<FileSystemEventArgs> sourceDirEventBuffer    = new List<FileSystemEventArgs>();
 
 
-		public	static	event	EventHandler<ResourceEventArgs>				ResourceCreated		= null;
-		public	static	event	EventHandler<ResourceEventArgs>				ResourceDeleted		= null;
-		public	static	event	EventHandler<ResourceEventArgs>				ResourceModified	= null;
-		public	static	event	EventHandler<ResourceRenamedEventArgs>		ResourceRenamed		= null;
-		public	static	event	EventHandler<FileSystemEventArgs>			PluginChanged		= null;
-		public	static	event	EventHandler<BeginGlobalRenameEventArgs>	BeginGlobalRename	= null;
+		public static event EventHandler<ResourceEventArgs>          ResourceCreated   = null;
+		public static event EventHandler<ResourceEventArgs>          ResourceDeleted   = null;
+		public static event EventHandler<ResourceEventArgs>          ResourceModified  = null;
+		public static event EventHandler<ResourceRenamedEventArgs>   ResourceRenamed   = null;
+		public static event EventHandler<FileSystemEventArgs>        PluginChanged     = null;
+		public static event EventHandler<BeginGlobalRenameEventArgs> BeginGlobalRename = null;
 		
 		
 		internal static void Init()
