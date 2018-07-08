@@ -796,7 +796,7 @@ namespace Duality.Editor
 					}
 					else if (e.IsDirectory && PathOp.IsPathLocatedIn(r.Path, e.OldPath))
 					{
-						r.Path = r.Path.Replace(e.OldPath, e.Path);
+						r.Path = e.Path + r.Path.Remove(0, e.OldPath.Length);
 						counter++;
 						break;
 					}
