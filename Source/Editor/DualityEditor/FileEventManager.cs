@@ -241,9 +241,9 @@ namespace Duality.Editor
 		private static void GatherFileSystemEvents(List<FileSystemEventArgs> watcherEvents, string basePath, out List<FileEvent> eventList)
 		{
 			eventList = null;
-			while (dataDirEventBuffer.Count > 0)
+			while (watcherEvents.Count > 0)
 			{
-				FileSystemEventArgs e = FetchFileSystemEvent(dataDirEventBuffer, DualityApp.DataDirectory);
+				FileSystemEventArgs e = FetchFileSystemEvent(watcherEvents, basePath);
 				if (e == null) continue;
 
 				// Ignore stuff saved by the editor itself
