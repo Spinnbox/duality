@@ -23,48 +23,6 @@ namespace Duality.Editor
 {
 	public static class FileEventManager
 	{
-		private struct FileEvent : IEquatable<FileEvent>
-		{
-			public string Path;
-			public string OldPath;
-			public bool IsDirectory;
-			public WatcherChangeTypes Type;
-
-			public bool IsEmpty
-			{
-				get { return this.Path == null; }
-			}
-
-			public bool Equals(FileEvent other)
-			{
-				return
-					this.Path == other.Path &&
-					this.OldPath == other.OldPath &&
-					this.IsDirectory == other.IsDirectory &&
-					this.Type == other.Type;
-			}
-			public override bool Equals(object obj)
-			{
-				if (obj is FileEvent)
-					return this.Equals((FileEvent)obj);
-				else
-					return false;
-			}
-			public override int GetHashCode()
-			{
-				int hash = 17;
-				MathF.CombineHashCode(ref hash, this.Path != null ? this.Path.GetHashCode() : 0);
-				MathF.CombineHashCode(ref hash, this.OldPath != null ? this.OldPath.GetHashCode() : 0);
-				MathF.CombineHashCode(ref hash, this.IsDirectory ? 23 : 0);
-				MathF.CombineHashCode(ref hash, (int)this.Type);
-				return hash;
-			}
-			public override string ToString()
-			{
-				return string.Format("{0} '{1}'", this.Type, this.Path);
-			}
-		}
-
 		private static DateTime          lastEventProc           = DateTime.Now;
 		private static FileSystemWatcher pluginWatcherWorking    = null;
 		private static FileSystemWatcher pluginWatcherExec       = null;
@@ -74,8 +32,8 @@ namespace Duality.Editor
 		private static HashSet<string>   reimportSchedule        = new HashSet<string>();
 		private static HashSet<string>   editorModifiedFiles     = new HashSet<string>();
 		private static HashSet<string>   editorModifiedFilesLast = new HashSet<string>();
-		private static List<FileEvent>   dataDirEventBuffer      = new List<FileEvent>();
-		private static List<FileEvent>   sourceDirEventBuffer    = new List<FileEvent>();
+		private static FileEventQueue    dataDirEventBuffer      = new FileEventQueue();
+		private static FileEventQueue    sourceDirEventBuffer    = new FileEventQueue();
 
 
 		public static event EventHandler<ResourceEventArgs>          ResourceCreated   = null;
@@ -199,92 +157,13 @@ namespace Duality.Editor
 		}
 
 
-		private static void AggregateFileSystemEvents(List<FileEvent> events)
+		private static bool EditorEventFilter(FileEvent fileEvent)
 		{
-			// Traverse events and aggregate with previous events, so the latest event
-			// in an aggregate chain is the one that defines event order.
-			for (int currentIndex = events.Count - 1; currentIndex > 0; currentIndex--)
-			{
-				FileEvent current = events[currentIndex];
-				string currentOldFileName = Path.GetFileName(current.OldPath);
-				string currentFileName = Path.GetFileName(current.Path);
+			// Filter out changes made by the editor itself
+			if (fileEvent.Type == FileEventType.Changed && IsPathEditorModified(fileEvent.Path))
+				return true;
 
-				for (int prevIndex = currentIndex - 1; prevIndex >= 0; prevIndex--)
-				{
-					FileEvent prev = events[prevIndex];
-					string prevFileName = Path.GetFileName(current.Path);
-
-					// Aggregate sequential renames / moves of the same file
-					if (current.Type == WatcherChangeTypes.Renamed &&
-						prev.Type == WatcherChangeTypes.Renamed &&
-						currentOldFileName == prevFileName)
-					{
-						current.OldPath = prev.OldPath;
-						events.RemoveAt(prevIndex);
-						currentIndex--;
-						continue;
-					}
-
-					// Aggregate "delete A, then rename B to A" into "rename B to A, changed A" events.
-					// Some applications (like Photoshop) do stuff like that when saving files.
-					if (current.Type == WatcherChangeTypes.Renamed &&
-						prev.Type == WatcherChangeTypes.Deleted &&
-						current.Path == prev.Path)
-					{
-						FileEvent rename = new FileEvent();
-						rename.Type = WatcherChangeTypes.Renamed;
-						rename.OldPath = prev.Path;
-						rename.Path = current.Path;
-						rename.IsDirectory = current.IsDirectory;
-						events.Insert(currentIndex, rename);
-						currentIndex++;
-
-						current.Type = WatcherChangeTypes.Changed;
-						current.OldPath = current.Path;
-						events.RemoveAt(prevIndex);
-						currentIndex--;
-						continue;
-					}
-
-					// Aggregate "delete Foo/A, create Bar/A" to "rename Foo/A to Bar/A" events.
-					if (current.Type == WatcherChangeTypes.Created &&
-						prev.Type == WatcherChangeTypes.Deleted &&
-						currentFileName == prevFileName)
-					{
-						current.Type = WatcherChangeTypes.Renamed;
-						current.OldPath = prev.Path;
-						events.RemoveAt(prevIndex);
-						currentIndex--;
-						continue;
-					}
-				}
-
-				// Assign back the modified current file event after its potential aggregation
-				events[currentIndex] = current;
-			}
-		}
-		private static void FilterFileSystemEvents(List<FileEvent> events)
-		{
-			for (int currentIndex = events.Count - 1; currentIndex > 0; currentIndex--)
-			{
-				FileEvent current = events[currentIndex];
-
-				// Discard pointless rename events
-				if (current.Type == WatcherChangeTypes.Renamed &&
-					current.OldPath == current.Path)
-				{
-					events.RemoveAt(currentIndex);
-					continue;
-				}
-
-				// Discard changes made by the editor itself
-				if (current.Type == WatcherChangeTypes.Changed && 
-					IsPathEditorModified(current.Path))
-				{
-					events.RemoveAt(currentIndex);
-					continue;
-				}
-			}
+			return false;
 		}
 
 		private static FileEvent TranslateFileEvent(FileSystemEventArgs watcherEvent, bool isDirectory)
@@ -292,7 +171,15 @@ namespace Duality.Editor
 			FileEvent fileEvent;
 			fileEvent.Path = watcherEvent.FullPath;
 			fileEvent.IsDirectory = isDirectory;
-			fileEvent.Type = watcherEvent.ChangeType;
+			fileEvent.Type = FileEventType.Changed;
+
+			switch (watcherEvent.ChangeType)
+			{
+				case WatcherChangeTypes.Created: fileEvent.Type = FileEventType.Created; break;
+				case WatcherChangeTypes.Deleted: fileEvent.Type = FileEventType.Deleted; break;
+				case WatcherChangeTypes.Changed: fileEvent.Type = FileEventType.Changed; break;
+				case WatcherChangeTypes.Renamed: fileEvent.Type = FileEventType.Renamed; break;
+			}
 
 			if (watcherEvent is RenamedEventArgs)
 				fileEvent.OldPath = ((RenamedEventArgs)watcherEvent).OldFullPath;
@@ -306,24 +193,20 @@ namespace Duality.Editor
 		{
 			if (!PathHelper.IsPathVisible(e.FullPath)) return;
 
-			// Translate the file system watcher event into out local event struct
+			// Translate the file system watcher event into our own data structure
 			FileEvent fileEvent = TranslateFileEvent(e, isDirectory);
-
-			// Aggregate all events of the same type for the same path into one event
-			dataDirEventBuffer.RemoveAll(f => f.Path == fileEvent.Path && f.Type == fileEvent.Type);
 			dataDirEventBuffer.Add(fileEvent);
 		}
 		private static void ProcessDataDirEvents()
 		{
-			// Retrieve and pre-process events, so we end up with only the relevant events.
-			AggregateFileSystemEvents(dataDirEventBuffer);
-			FilterFileSystemEvents(dataDirEventBuffer);
+			// Filter out events we don't want to process in the editor
+			dataDirEventBuffer.Filter(EditorEventFilter);
 
 			// System internal event processing / do all the low-level stuff
-			HandleDataDirEvents(dataDirEventBuffer);
+			HandleDataDirEvents(dataDirEventBuffer.Items);
 
 			// Fire editor-wide events to allow plugins and editor modules to react
-			InvokeGlobalDataDirEventHandlers(dataDirEventBuffer);
+			InvokeGlobalDataDirEventHandlers(dataDirEventBuffer.Items);
 
 			// Handled all events, start over with an empty buffer
 			dataDirEventBuffer.Clear();
@@ -337,15 +220,15 @@ namespace Duality.Editor
 			{
 				FileEvent fileEvent = eventList[i];
 
-				if (fileEvent.Type == WatcherChangeTypes.Changed)
+				if (fileEvent.Type == FileEventType.Changed)
 				{
 					HandleDataDirChangeEvent(fileEvent);
 				}
-				else if (fileEvent.Type == WatcherChangeTypes.Deleted)
+				else if (fileEvent.Type == FileEventType.Deleted)
 				{
 					HandleDataDirDeleteEvent(fileEvent, ref sourceMediaDeleteSchedule);
 				}
-				else if (fileEvent.Type == WatcherChangeTypes.Renamed)
+				else if (fileEvent.Type == FileEventType.Renamed)
 				{
 					HandleDataDirRenameEvent(fileEvent, ref renameEventBuffer);
 				}
@@ -479,22 +362,22 @@ namespace Duality.Editor
 					continue;
 
 				// Fire events
-				if (fileEvent.Type == WatcherChangeTypes.Changed)
+				if (fileEvent.Type == FileEventType.Changed)
 				{
 					if (ResourceModified != null)
 						ResourceModified(null, new ResourceEventArgs(fileEvent.Path, fileEvent.IsDirectory));
 				}
-				else if (fileEvent.Type == WatcherChangeTypes.Created)
+				else if (fileEvent.Type == FileEventType.Created)
 				{
 					if (ResourceCreated != null)
 						ResourceCreated(null, new ResourceEventArgs(fileEvent.Path, fileEvent.IsDirectory));
 				}
-				else if (fileEvent.Type == WatcherChangeTypes.Deleted)
+				else if (fileEvent.Type == FileEventType.Deleted)
 				{
 					if (ResourceDeleted != null)
 						ResourceDeleted(null, new ResourceEventArgs(fileEvent.Path, fileEvent.IsDirectory));
 				}
-				else if (fileEvent.Type == WatcherChangeTypes.Renamed)
+				else if (fileEvent.Type == FileEventType.Renamed)
 				{
 					if (ResourceRenamed != null)
 						ResourceRenamed(null, new ResourceRenamedEventArgs(fileEvent.Path, fileEvent.OldPath, fileEvent.IsDirectory));
@@ -506,26 +389,23 @@ namespace Duality.Editor
 		{
 			if (!PathHelper.IsPathVisible(e.FullPath)) return;
 
-			// Translate the file system watcher event into out local event struct
+			// Translate the file system watcher event into our own data structure
 			FileEvent fileEvent = TranslateFileEvent(e, Directory.Exists(e.FullPath));
-
-			// Aggregate all events of the same type for the same path into one event
-			sourceDirEventBuffer.RemoveAll(f => f.Path == fileEvent.Path && f.Type == fileEvent.Type);
 			sourceDirEventBuffer.Add(fileEvent);
 		}
 		private static void ProcessSourceDirEvents()
 		{
-			// Retrieve and pre-process events, so we end up with only the relevant events.
-			AggregateFileSystemEvents(sourceDirEventBuffer);
-			FilterFileSystemEvents(sourceDirEventBuffer);
+			// Filter out events we don't want to process in the editor
+			sourceDirEventBuffer.Filter(EditorEventFilter);
 
 			// Process events
-			for (int i = 0; i < sourceDirEventBuffer.Count; i++)
+			List<FileEvent> sourceEvents = sourceDirEventBuffer.Items;
+			for (int i = 0; i < sourceEvents.Count; i++)
 			{
-				FileEvent fileEvent = sourceDirEventBuffer[i];
+				FileEvent fileEvent = sourceEvents[i];
 
 				// Mind modified source files for re-import
-				if (fileEvent.Type == WatcherChangeTypes.Changed)
+				if (fileEvent.Type == FileEventType.Changed)
 				{
 					if (File.Exists(fileEvent.Path) && PathOp.IsPathLocatedIn(fileEvent.Path, EditorHelper.SourceMediaDirectory)) 
 						reimportSchedule.Add(fileEvent.Path);
@@ -533,7 +413,7 @@ namespace Duality.Editor
 			}
 
 			// Handled all events, start over with an empty buffer
-			dataDirEventBuffer.Clear();
+			sourceDirEventBuffer.Clear();
 		}
 
 		public static void FlagPathEditorModified(string path)
