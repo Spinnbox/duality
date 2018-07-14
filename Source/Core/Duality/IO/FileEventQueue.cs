@@ -4,25 +4,51 @@ using System.Collections.Generic;
 
 namespace Duality.IO
 {
+	/// <summary>
+	/// A specialized data structure for queueing <see cref="FileEvent"/> data and
+	/// normalizing it by aggregating event groups and duplicate events.
+	/// </summary>
 	public class FileEventQueue
 	{
 		private List<FileEvent> items = new List<FileEvent>();
 
-		public List<FileEvent> Items
+		/// <summary>
+		/// Whether there are any events in the queue.
+		/// </summary>
+		public bool IsEmpty
+		{
+			get { return this.items.Count == 0; }
+		}
+		/// <summary>
+		/// A list of normalized events in this queue.
+		/// </summary>
+		public IReadOnlyList<FileEvent> Items
 		{
 			get { return this.items; }
 		}
 
+
+		/// <summary>
+		/// Adds a new <see cref="FileEvent"/> at the end of the queue.
+		/// </summary>
+		/// <param name="fileEvent"></param>
 		public void Add(FileEvent fileEvent)
 		{
 			this.items.Add(fileEvent);
 			this.AggregateWithLatest();
 		}
+		/// <summary>
+		/// Clears the queue of all events.
+		/// </summary>
 		public void Clear()
 		{
 			this.items.Clear();
 		}
-		public void Filter(Predicate<FileEvent> predicate)
+		/// <summary>
+		/// Removes all events from the queue that match the specified predicate.
+		/// </summary>
+		/// <param name="predicate"></param>
+		public void ApplyFilter(Predicate<FileEvent> predicate)
 		{
 			this.items.RemoveAll(predicate);
 		}
@@ -39,7 +65,7 @@ namespace Duality.IO
 			for (int prevIndex = currentIndex - 1; prevIndex >= 0; prevIndex--)
 			{
 				FileEvent prev = this.items[prevIndex];
-				string prevFileName = PathOp.GetFileName(current.Path);
+				string prevFileName = PathOp.GetFileName(prev.Path);
 
 				// Aggregate identical events
 				if (current.Equals(prev))
@@ -97,6 +123,7 @@ namespace Duality.IO
 					if (prev.Type == FileEventType.Renamed)
 					{
 						current.Path = prev.OldPath;
+						current.OldPath = prev.OldPath;
 					}
 					this.items.RemoveAt(prevIndex);
 					currentIndex--;
@@ -105,7 +132,7 @@ namespace Duality.IO
 
 				// Aggregate anything after a create into just the create
 				if (prev.Type == FileEventType.Created &&
-					prev.Path == current.Path)
+					(prev.Path == current.Path || prev.Path == current.OldPath))
 				{
 					current.Type = FileEventType.Created;
 					current.OldPath = current.Path;

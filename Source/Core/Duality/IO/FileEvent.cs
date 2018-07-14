@@ -28,6 +28,21 @@ namespace Duality.IO
 		public FileEventType Type;
 
 
+		public FileEvent(FileEventType type, string path, bool isDirectory)
+		{
+			this.Type = type;
+			this.Path = path;
+			this.OldPath = path;
+			this.IsDirectory = isDirectory;
+		}
+		public FileEvent(FileEventType type, string oldPath, string path, bool isDirectory)
+		{
+			this.Type = type;
+			this.Path = path;
+			this.OldPath = oldPath;
+			this.IsDirectory = isDirectory;
+		}
+
 		public bool Equals(FileEvent other)
 		{
 			return

@@ -200,26 +200,25 @@ namespace Duality.Editor
 		private static void ProcessDataDirEvents()
 		{
 			// Filter out events we don't want to process in the editor
-			dataDirEventBuffer.Filter(EditorEventFilter);
+			dataDirEventBuffer.ApplyFilter(EditorEventFilter);
+			if (dataDirEventBuffer.IsEmpty) return;
 
 			// System internal event processing / do all the low-level stuff
-			HandleDataDirEvents(dataDirEventBuffer.Items);
+			HandleDataDirEvents(dataDirEventBuffer);
 
 			// Fire editor-wide events to allow plugins and editor modules to react
-			InvokeGlobalDataDirEventHandlers(dataDirEventBuffer.Items);
+			InvokeGlobalDataDirEventHandlers(dataDirEventBuffer);
 
 			// Handled all events, start over with an empty buffer
 			dataDirEventBuffer.Clear();
 		}
-		private static void HandleDataDirEvents(List<FileEvent> eventList)
+		private static void HandleDataDirEvents(FileEventQueue eventQueue)
 		{
 			// Handle each event according to its type
 			List<FileEvent> renameEventBuffer = null;
 			HashSet<string> sourceMediaDeleteSchedule = null;
-			for (int i = 0; i < eventList.Count; i++)
+			foreach (FileEvent fileEvent in dataDirEventBuffer.Items)
 			{
-				FileEvent fileEvent = eventList[i];
-
 				if (fileEvent.Type == FileEventType.Changed)
 				{
 					HandleDataDirChangeEvent(fileEvent);
@@ -351,12 +350,10 @@ namespace Duality.Editor
 				}
 			}
 		}
-		private static void InvokeGlobalDataDirEventHandlers(List<FileEvent> eventList)
+		private static void InvokeGlobalDataDirEventHandlers(FileEventQueue eventQueue)
 		{
-			for (int i = 0; i < eventList.Count; i++)
+			foreach (FileEvent fileEvent in dataDirEventBuffer.Items)
 			{
-				FileEvent fileEvent = eventList[i];
-
 				// Skip everything that isn't either a Resource or a directory
 				if (!Resource.IsResourceFile(fileEvent.Path) && !fileEvent.IsDirectory)
 					continue;
@@ -396,14 +393,12 @@ namespace Duality.Editor
 		private static void ProcessSourceDirEvents()
 		{
 			// Filter out events we don't want to process in the editor
-			sourceDirEventBuffer.Filter(EditorEventFilter);
+			sourceDirEventBuffer.ApplyFilter(EditorEventFilter);
+			if (sourceDirEventBuffer.IsEmpty) return;
 
 			// Process events
-			List<FileEvent> sourceEvents = sourceDirEventBuffer.Items;
-			for (int i = 0; i < sourceEvents.Count; i++)
+			foreach (FileEvent fileEvent in dataDirEventBuffer.Items)
 			{
-				FileEvent fileEvent = sourceEvents[i];
-
 				// Mind modified source files for re-import
 				if (fileEvent.Type == FileEventType.Changed)
 				{
