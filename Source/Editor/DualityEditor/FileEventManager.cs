@@ -281,6 +281,62 @@ namespace Duality.Editor
 				eventList.Add(fileEvent);
 			}
 		}
+		private static void AggregateFileSystemEvents(List<FileEvent> events)
+		{
+			// Traverse events and aggregate with previous events, so the latest event
+			// in an aggregate chain is the one that defines event order.
+			for (int currentIndex = events.Count - 1; currentIndex > 0; currentIndex--)
+			{
+				FileEvent current = events[currentIndex];
+				string currentOldFileName = Path.GetFileName(current.OldPath);
+				string currentFileName = Path.GetFileName(current.Path);
+
+				for (int prevIndex = currentIndex - 1; prevIndex >= 0; prevIndex--)
+				{
+					FileEvent prev = events[prevIndex];
+					string prevFileName = Path.GetFileName(current.Path);
+
+					// Aggregate sequential renames / moves of the same file
+					if (current.ChangeType == WatcherChangeTypes.Renamed &&
+						prev.ChangeType == WatcherChangeTypes.Renamed &&
+						currentOldFileName == prevFileName)
+					{
+						current.OldPath = prev.OldPath;
+						events.RemoveAt(prevIndex);
+						currentIndex--;
+						continue;
+					}
+
+					// Aggregate "delete A, then rename B to A" into "changed A" events.
+					// Some applications (like Photoshop) do stuff like that when saving files.
+					if (current.ChangeType == WatcherChangeTypes.Renamed &&
+						prev.ChangeType == WatcherChangeTypes.Deleted &&
+						current.Path == prev.Path)
+					{
+						current.ChangeType = WatcherChangeTypes.Changed;
+						current.OldPath = current.Path;
+						events.RemoveAt(prevIndex);
+						currentIndex--;
+						continue;
+					}
+
+					// Aggregate "delete Foo/A, create Bar/A" to "rename Foo/A to Bar/A" events.
+					if (current.ChangeType == WatcherChangeTypes.Created &&
+						prev.ChangeType == WatcherChangeTypes.Deleted &&
+						currentFileName == prevFileName)
+					{
+						current.ChangeType = WatcherChangeTypes.Renamed;
+						current.OldPath = prev.Path;
+						events.RemoveAt(prevIndex);
+						currentIndex--;
+						continue;
+					}
+				}
+
+				// Assign back the modified current file event after its potential aggregation
+				events[currentIndex] = current;
+			}
+		}
 
 		private static FileEvent TranslateFileEvent(FileSystemEventArgs watcherEvent, bool isDirectory)
 		{
