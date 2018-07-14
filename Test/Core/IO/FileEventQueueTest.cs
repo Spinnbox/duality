@@ -121,7 +121,7 @@ namespace Duality.Tests.IO
 			// Assert that the delete was discarded, but a change was queued after rename
 			// because we essentially still have that file, just with different contents.
 			List<FileEvent> outputEvents = new List<FileEvent>();
-			outputEvents.Add(new FileEvent(FileEventType.Renamed, "Foo\\B", "Foo\\A", false));
+			outputEvents.Add(new FileEvent(FileEventType.Deleted, "Foo\\B", false));
 			outputEvents.Add(new FileEvent(FileEventType.Changed, "Foo\\A", false));
 			CollectionAssert.AreEqual(outputEvents, queue.Items);
 		}
@@ -168,6 +168,54 @@ namespace Duality.Tests.IO
 			// Note that we require the queue to pick up on the rename mid-sequence.
 			List<FileEvent> outputEvents = new List<FileEvent>();
 			outputEvents.Add(new FileEvent(FileEventType.Created, "Foo\\B", false));
+			CollectionAssert.AreEqual(outputEvents, queue.Items);
+		}
+		[Test] public void DiscardCreateAnythingDelete()
+		{
+			List<FileEvent> inputEvents = new List<FileEvent>();
+			inputEvents.Add(new FileEvent(FileEventType.Created, "Foo\\A", false));
+			inputEvents.Add(new FileEvent(FileEventType.Changed, "Foo\\A", false));
+			inputEvents.Add(new FileEvent(FileEventType.Renamed, "Foo\\A", "Foo\\B", false));
+			inputEvents.Add(new FileEvent(FileEventType.Changed, "Foo\\B", false));
+			inputEvents.Add(new FileEvent(FileEventType.Deleted, "Foo\\B", false));
+
+			// Create a queue and add events in order
+			FileEventQueue queue = new FileEventQueue();
+			foreach (FileEvent item in inputEvents)
+			{
+				queue.Add(item);
+			}
+
+			// Assert that the queue discards event sequences starting with file creation
+			// and ending with file deletion, as they might as well have never existed.
+			// Note that we require the queue to pick up on the rename mid-sequence.
+			List<FileEvent> outputEvents = new List<FileEvent>();
+			CollectionAssert.AreEqual(outputEvents, queue.Items);
+		}
+
+		[Test] public void SimplifyPhotoshopRename()
+		{
+			// Photoshop, and maybe other applications, have this peculiar trick when
+			// saving output files that overwrite an existing file, in which they first
+			// write to a temp file, then delete the target file, then rename the temp
+			// file into the target file.
+			List<FileEvent> inputEvents = new List<FileEvent>();
+			inputEvents.Add(new FileEvent(FileEventType.Created, "Foo\\Temp", false));
+			inputEvents.Add(new FileEvent(FileEventType.Changed, "Foo\\Temp", false));
+			inputEvents.Add(new FileEvent(FileEventType.Deleted, "Foo\\A", false));
+			inputEvents.Add(new FileEvent(FileEventType.Renamed, "Foo\\Temp", "Foo\\A", false));
+
+			// Create a queue and add events in order
+			FileEventQueue queue = new FileEventQueue();
+			foreach (FileEvent item in inputEvents)
+			{
+				queue.Add(item);
+			}
+
+			// Assert that the way we see these events has been normalized so we can easily
+			// see that the target file was changed.
+			List<FileEvent> outputEvents = new List<FileEvent>();
+			outputEvents.Add(new FileEvent(FileEventType.Changed, "Foo\\A", false));
 			CollectionAssert.AreEqual(outputEvents, queue.Items);
 		}
 	}

@@ -35,7 +35,7 @@ namespace Duality.IO
 		public void Add(FileEvent fileEvent)
 		{
 			this.items.Add(fileEvent);
-			this.AggregateWithLatest();
+			this.AggregateNewlyAdded(this.items.Count - 1);
 		}
 		/// <summary>
 		/// Clears the queue of all events.
@@ -53,105 +53,126 @@ namespace Duality.IO
 			this.items.RemoveAll(predicate);
 		}
 
-		private void AggregateWithLatest()
+		/// <summary>
+		/// Performs an aggregate operation on all new events, starting at the specified index.
+		/// Each event will include all previous events in its aggregate check.
+		/// </summary>
+		/// <param name="addedStartingIndex"></param>
+		private void AggregateNewlyAdded(int addedStartingIndex)
 		{
-			int currentIndex = this.items.Count - 1;
-			FileEvent current = this.items[currentIndex];
-			string currentOldFileName = PathOp.GetFileName(current.OldPath);
-			string currentFileName = PathOp.GetFileName(current.Path);
-
-			// Aggregate with previous events, so the latest event
-			// in an aggregate chain is the one that defines event order.
-			for (int prevIndex = currentIndex - 1; prevIndex >= 0; prevIndex--)
+			// Iterate backwards over newly added events, and run an aggregation step
+			// with all previous events for each of them.
+			for (int currentIndex = this.items.Count - 1; currentIndex >= addedStartingIndex; currentIndex--)
 			{
-				FileEvent prev = this.items[prevIndex];
-				string prevFileName = PathOp.GetFileName(prev.Path);
+				FileEvent current = this.items[currentIndex];
+				string currentOldFileName = PathOp.GetFileName(current.OldPath);
+				string currentFileName = PathOp.GetFileName(current.Path);
+				bool discardedCurrent = false;
 
-				// Aggregate identical events
-				if (current.Equals(prev))
+				// Aggregate with previous events, so the latest event
+				// in an aggregate chain is the one that defines event order.
+				for (int prevIndex = currentIndex - 1; prevIndex >= 0; prevIndex--)
 				{
-					this.items.RemoveAt(prevIndex);
-					currentIndex--;
-					continue;
-				}
+					FileEvent prev = this.items[prevIndex];
+					string prevFileName = PathOp.GetFileName(prev.Path);
+					bool consumedPrev = false;
 
-				// Aggregate "delete Foo/A, create Bar/A" to "rename Foo/A to Bar/A" events.
-				if (current.Type == FileEventType.Created &&
-					prev.Type == FileEventType.Deleted &&
-					currentFileName == prevFileName)
-				{
-					current.Type = FileEventType.Renamed;
-					current.OldPath = prev.Path;
-					this.items.RemoveAt(prevIndex);
-					currentIndex--;
-					continue;
-				}
-
-				// Aggregate sequential renames / moves of the same file
-				if (current.Type == FileEventType.Renamed &&
-					prev.Type == FileEventType.Renamed &&
-					currentOldFileName == prevFileName)
-				{
-					current.OldPath = prev.OldPath;
-					this.items.RemoveAt(prevIndex);
-					currentIndex--;
-					continue;
-				}
-
-				// Aggregate "delete A, then rename B to A" into "rename B to A, changed A" events.
-				// Some applications (like Photoshop) do stuff like that when saving files.
-				if (current.Type == FileEventType.Renamed &&
-					prev.Type == FileEventType.Deleted &&
-					current.Path == prev.Path)
-				{
-					FileEvent rename = current;
-					this.items.Insert(currentIndex, rename);
-					currentIndex++;
-
-					current.Type = FileEventType.Changed;
-					current.OldPath = current.Path;
-					this.items.RemoveAt(prevIndex);
-					currentIndex--;
-					continue;
-				}
-
-				// Aggregate anything before a delete into just the delete
-				if (current.Type == FileEventType.Deleted &&
-					prev.Path == current.Path)
-				{
-					// Special case for previous renames: Translate the delete back to the old path
-					if (prev.Type == FileEventType.Renamed)
+					// Aggregate identical events
+					if (current.Equals(prev))
 					{
-						current.Path = prev.OldPath;
-						current.OldPath = prev.OldPath;
+						consumedPrev = true;
 					}
-					this.items.RemoveAt(prevIndex);
-					currentIndex--;
-					continue;
+					// Aggregate "delete Foo/A, create Bar/A" to "rename Foo/A to Bar/A" events.
+					else if (
+						current.Type == FileEventType.Created &&
+						prev.Type == FileEventType.Deleted &&
+						currentFileName == prevFileName)
+					{
+						current.Type = FileEventType.Renamed;
+						current.OldPath = prev.Path;
+						consumedPrev = true;
+					}
+					// Aggregate sequential renames / moves of the same file
+					else if (
+						current.Type == FileEventType.Renamed &&
+						prev.Type == FileEventType.Renamed &&
+						currentOldFileName == prevFileName)
+					{
+						current.OldPath = prev.OldPath;
+						consumedPrev = true;
+					}
+					// Aggregate "delete A, then rename B to A" into "delete B, changed A" events.
+					// Some applications (like Photoshop) do stuff like that when saving files.
+					else if (
+						current.Type == FileEventType.Renamed &&
+						prev.Type == FileEventType.Deleted &&
+						current.Path == prev.Path)
+					{
+						FileEvent deleted = current;
+						deleted.Type = FileEventType.Deleted;
+						deleted.Path = current.OldPath;
+						deleted.OldPath = current.OldPath;
+						this.items.Insert(currentIndex, deleted);
+						currentIndex++;
+
+						current.Type = FileEventType.Changed;
+						current.OldPath = current.Path;
+						consumedPrev = true;
+					}
+					// Aggregate anything before a delete into just the delete
+					else if (
+						current.Type == FileEventType.Deleted &&
+						prev.Path == current.Path)
+					{
+						// Special case for previous renames: Translate the delete back to the old path
+						if (prev.Type == FileEventType.Renamed)
+						{
+							current.Path = prev.OldPath;
+							current.OldPath = prev.OldPath;
+						}
+						// Special case for previous creates: Discard both the delete and the create.
+						else if (prev.Type == FileEventType.Created)
+						{
+							discardedCurrent = true;
+						}
+						consumedPrev = true;
+					}
+					// Aggregate anything after a create into just the create
+					else if (
+						prev.Type == FileEventType.Created &&
+						(prev.Path == current.Path || prev.Path == current.OldPath))
+					{
+						current.Type = FileEventType.Created;
+						current.OldPath = current.Path;
+						consumedPrev = true;
+					}
+
+					// Remove the previous item if it was aggregated with the current
+					if (consumedPrev)
+					{
+						this.items.RemoveAt(prevIndex);
+
+						// Update other indices to account for removed item
+						currentIndex--;
+						if (addedStartingIndex > prevIndex)
+							addedStartingIndex--;
+					}
 				}
 
-				// Aggregate anything after a create into just the create
-				if (prev.Type == FileEventType.Created &&
-					(prev.Path == current.Path || prev.Path == current.OldPath))
+				// Filter out no-op events
+				if (current.Type == FileEventType.Renamed &&
+					current.OldPath == current.Path)
 				{
-					current.Type = FileEventType.Created;
-					current.OldPath = current.Path;
-					this.items.RemoveAt(prevIndex);
-					currentIndex--;
-					continue;
+					discardedCurrent = true;
+					this.items.RemoveAt(currentIndex);
 				}
-			}
 
-			// Filter out no-op events
-			if (current.Type == FileEventType.Renamed &&
-				current.OldPath == current.Path)
-			{
-				this.items.RemoveAt(currentIndex);
-				return;
+				// Discard or update the current event
+				if (discardedCurrent)
+					this.items.RemoveAt(currentIndex);
+				else
+					this.items[currentIndex] = current;
 			}
-
-			// Assign back the modified current file event after its potential aggregation
-			this.items[currentIndex] = current;
 		}
 	}
 }
