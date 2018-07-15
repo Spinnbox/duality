@@ -163,6 +163,10 @@ namespace Duality.Editor
 			if (fileEvent.Type == FileEventType.Changed && IsPathEditorModified(fileEvent.Path))
 				return true;
 
+			// Skip everything that isn't either a Resource or a directory
+			if (!Resource.IsResourceFile(fileEvent.Path) && !fileEvent.IsDirectory)
+				return true;
+
 			return false;
 		}
 
@@ -269,7 +273,7 @@ namespace Duality.Editor
 		private static void HandleDataDirChangeEvent(FileEvent fileEvent)
 		{
 			// Unregister outdated resources when modified outside the editor
-			if (Resource.IsResourceFile(fileEvent.Path) && ContentProvider.HasContent(fileEvent.Path))
+			if (!fileEvent.IsDirectory && ContentProvider.HasContent(fileEvent.Path))
 			{
 				ContentRef<Resource> resRef = new ContentRef<Resource>(null, fileEvent.Path);
 				bool isCurrentScene = resRef.Is<Scene>() && Scene.Current == resRef.Res;
@@ -295,69 +299,59 @@ namespace Duality.Editor
 		}
 		private static void HandleDataDirDeleteEvent(FileEvent fileEvent, ref HashSet<string> sourceMediaDeleteSchedule)
 		{
-			if (Resource.IsResourceFile(fileEvent.Path) || fileEvent.IsDirectory)
-			{
-				// Schedule Source/Media file deletion to keep it organized / synced with Resource Data
-				if (sourceMediaDeleteSchedule == null)
-					sourceMediaDeleteSchedule = new HashSet<string>();
-				GetDeleteSourceMediaFilePaths(fileEvent, sourceMediaDeleteSchedule);
+			// Schedule Source/Media file deletion to keep it organized / synced with Resource Data
+			if (sourceMediaDeleteSchedule == null)
+				sourceMediaDeleteSchedule = new HashSet<string>();
+			GetDeleteSourceMediaFilePaths(fileEvent, sourceMediaDeleteSchedule);
 
-				// Unregister no-longer existing resources
-				if (fileEvent.IsDirectory)
-					ContentProvider.RemoveContentTree(fileEvent.Path);
-				else
-					ContentProvider.RemoveContent(fileEvent.Path);
-			}
+			// Unregister no-longer existing resources
+			if (fileEvent.IsDirectory)
+				ContentProvider.RemoveContentTree(fileEvent.Path);
+			else
+				ContentProvider.RemoveContent(fileEvent.Path);
 		}
 		private static void HandleDataDirRenameEvent(FileEvent fileEvent, ref List<FileEvent> renameEventBuffer)
 		{
-			if (Resource.IsResourceFile(fileEvent.Path) || fileEvent.IsDirectory)
+			// Determine which Source / Media files would belong to this Resource - before moving it
+			string[] oldMediaPaths = PreMoveSourceMediaFile(fileEvent);
+
+			// Rename registered content
+			if (fileEvent.IsDirectory)
+				ContentProvider.RenameContentTree(fileEvent.OldPath, fileEvent.Path);
+			else
+				ContentProvider.RenameContent(fileEvent.OldPath, fileEvent.Path);
+
+			// Query skipped paths
+			bool isEmptyDir = fileEvent.IsDirectory && !Directory.EnumerateFileSystemEntries(fileEvent.Path).Any();
+			bool isSkippedPath = isEmptyDir;
+			if (!isSkippedPath && BeginGlobalRename != null)
 			{
-				// Determine which Source / Media files would belong to this Resource - before moving it
-				string[] oldMediaPaths = PreMoveSourceMediaFile(fileEvent);
+				BeginGlobalRenameEventArgs beginGlobalRenameArgs = new BeginGlobalRenameEventArgs(
+					fileEvent.Path,
+					fileEvent.OldPath,
+					fileEvent.IsDirectory);
+				BeginGlobalRename(null, beginGlobalRenameArgs);
+				isSkippedPath = beginGlobalRenameArgs.Cancel;
+			}
 
-				// Rename registered content
-				if (fileEvent.IsDirectory)
-					ContentProvider.RenameContentTree(fileEvent.OldPath, fileEvent.Path);
-				else
-					ContentProvider.RenameContent(fileEvent.OldPath, fileEvent.Path);
+			if (!isSkippedPath)
+			{
+				// Buffer rename event to perform the global rename for all at once.
+				if (renameEventBuffer == null)
+					renameEventBuffer = new List<FileEvent>();
+				renameEventBuffer.Add(fileEvent);
+			}
 
-				// Query skipped paths
-				bool isEmptyDir = fileEvent.IsDirectory && !Directory.EnumerateFileSystemEntries(fileEvent.Path).Any();
-				bool isSkippedPath = isEmptyDir;
-				if (!isSkippedPath && BeginGlobalRename != null)
-				{
-					BeginGlobalRenameEventArgs beginGlobalRenameArgs = new BeginGlobalRenameEventArgs(
-						fileEvent.Path,
-						fileEvent.OldPath,
-						fileEvent.IsDirectory);
-					BeginGlobalRename(null, beginGlobalRenameArgs);
-					isSkippedPath = beginGlobalRenameArgs.Cancel;
-				}
-
-				if (!isSkippedPath)
-				{
-					// Buffer rename event to perform the global rename for all at once.
-					if (renameEventBuffer == null)
-						renameEventBuffer = new List<FileEvent>();
-					renameEventBuffer.Add(fileEvent);
-				}
-
-				if (!isSkippedPath)
-				{
-					// Organize the Source/Media directory accordingly
-					MoveSourceMediaFile(fileEvent, oldMediaPaths);
-				}
+			if (!isSkippedPath)
+			{
+				// Organize the Source/Media directory accordingly
+				MoveSourceMediaFile(fileEvent, oldMediaPaths);
 			}
 		}
 		private static void InvokeGlobalDataDirEventHandlers(FileEventQueue eventQueue)
 		{
 			foreach (FileEvent fileEvent in dataDirEventBuffer.Items)
 			{
-				// Skip everything that isn't either a Resource or a directory
-				if (!Resource.IsResourceFile(fileEvent.Path) && !fileEvent.IsDirectory)
-					continue;
-
 				// Fire events
 				if (fileEvent.Type == FileEventType.Changed)
 				{
