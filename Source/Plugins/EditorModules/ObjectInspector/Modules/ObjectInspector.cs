@@ -10,6 +10,7 @@ using WeifenLuo.WinFormsUI.Docking;
 using AdamsLair.WinForms.PropertyEditing;
 
 using Duality;
+using Duality.IO;
 using Duality.Resources;
 using Duality.Editor;
 using Duality.Editor.AssetManagement;
@@ -87,7 +88,7 @@ namespace Duality.Editor.Plugins.ObjectInspector
 			DualityEditorApp.ObjectPropertyChanged += this.DualityEditorApp_ObjectPropertyChanged;
 			DualityEditorApp.Terminating += this.DualityEditorApp_Terminating;
 			AssetManager.ImportFinished += this.AssetManager_ImportFinished;
-			FileEventManager.ResourceModified += this.FileEventManager_ResourceModified;
+			FileEventManager.ResourcesChanged += this.FileEventManager_ResourcesChanged;
 
 			// Select something initially, if not done yet
 			if (this.propertyGrid.Selection.Count() == 0)
@@ -101,7 +102,7 @@ namespace Duality.Editor.Plugins.ObjectInspector
 			DualityEditorApp.ObjectPropertyChanged -= this.DualityEditorApp_ObjectPropertyChanged;
 			DualityEditorApp.Terminating -= this.DualityEditorApp_Terminating;
 			AssetManager.ImportFinished -= this.AssetManager_ImportFinished;
-			FileEventManager.ResourceModified -= this.FileEventManager_ResourceModified;
+			FileEventManager.ResourcesChanged -= this.FileEventManager_ResourcesChanged;
 		}
 		protected override void OnGotFocus(EventArgs e)
 		{
@@ -254,13 +255,14 @@ namespace Duality.Editor.Plugins.ObjectInspector
 				(e.Objects.Contains(Scene.Current) && this.propertyGrid.Selection.Any(o => o is GameObject || o is Component)))
 				this.propertyGrid.UpdateFromObjects(100);
 		}
-		private void FileEventManager_ResourceModified(object sender, ResourceEventArgs e)
+		private void FileEventManager_ResourcesChanged(object sender, ResourceFilesChangedEventArgs e)
 		{
-			if (!e.IsResource) return;
-			if (!e.Content.IsLoaded) return;
+			if (!e.AnyFiles(FileEventType.Changed)) return;
 
 			// Force updating all potentially generated previews when we display a resource that was modified externally
-			bool forceFullUpdate = this.propertyGrid.Selection.Contains(e.Content.Res);
+			bool forceFullUpdate = e.Contains(FileEventType.Changed, this.propertyGrid.Selection.OfType<Resource>());
+
+			// But in any case, do an inspector update. It's not that expensive and we're on the safe side.
 			this.UpdateDisplayedValues(forceFullUpdate);
 		}
 		private void AssetManager_ImportFinished(object sender, AssetImportFinishedEventArgs e)

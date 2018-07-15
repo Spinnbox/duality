@@ -10,6 +10,7 @@ using WeifenLuo.WinFormsUI.Docking;
 using AdamsLair.WinForms.ItemModels;
 
 using Duality;
+using Duality.IO;
 using Duality.Resources;
 using Duality.Plugins.Tilemaps;
 
@@ -107,10 +108,7 @@ namespace Duality.Editor.Plugins.Tilemaps
 			});
 
 			// Register events
-			FileEventManager.ResourceModified += this.FileEventManager_ResourceModified;
-			FileEventManager.ResourceDeleted += this.FileEventManager_ResourceDeleted;
-			FileEventManager.ResourceRenamed += this.FileEventManager_ResourceRenamed;
-			FileEventManager.ResourceCreated += this.FileEventManager_ResourceCreated;
+			FileEventManager.ResourcesChanged += this.FileEventManager_ResourcesChanged;
 			FileEventManager.BeginGlobalRename += this.FileEventManager_BeginGlobalRename;
 			DualityEditorApp.ObjectPropertyChanged += this.DualityEditorApp_ObjectPropertyChanged;
 		}
@@ -309,35 +307,28 @@ namespace Duality.Editor.Plugins.Tilemaps
 			}
 		}
 		
-		private void FileEventManager_ResourceModified(object sender, ResourceEventArgs e)
+		private void FileEventManager_ResourcesChanged(object sender, ResourceFilesChangedEventArgs e)
 		{
-			if (e.IsResource) this.OnResourceModified(e.Content);
-		}
-		private void FileEventManager_ResourceDeleted(object sender, ResourceEventArgs e)
-		{
-			if (e.IsResource) this.OnResourceModified(e.Content);
-		}
-		private void FileEventManager_ResourceRenamed(object sender, ResourceRenamedEventArgs e)
-		{
-			if (e.IsResource)
+			if (e.AnyFiles(FileEventType.Created | FileEventType.Deleted | FileEventType.Changed | FileEventType.Renamed))
 			{
-				// Only invoke our modified handler for the new content path, not the previous
-				// one, i.e. renaming an unknown Pixmap so that it now matches a Tileset's
-				// source path. The other case, where it matched the source path already, is
-				// dealt with in our BeginGlobalRename handler, since we need to act only
-				// AFTER the global rename has fixed all references.
-				this.OnResourceModified(e.Content);
+				foreach (FileEvent item in e.FileEvents)
+				{
+					if (item.IsDirectory) continue;
+
+					// Only invoke our modified handler for the new content path, not the previous
+					// one, i.e. renaming an unknown Pixmap so that it now matches a Tileset's
+					// source path. The other case, where it matched the source path already, is
+					// dealt with in our BeginGlobalRename handler, since we need to act only
+					// AFTER the global rename has fixed all references.
+					this.OnResourceModified(new ContentRef<Resource>(item.Path));
+				}
 			}
-		}
-		private void FileEventManager_ResourceCreated(object sender, ResourceEventArgs e)
-		{
-			if (e.IsResource) this.OnResourceModified(e.Content);
 		}
 		private void FileEventManager_BeginGlobalRename(object sender, BeginGlobalRenameEventArgs e)
 		{
 			// If we're doing a global rename on a Pixmap, schedule affected Tilemaps
 			// for an automatic recompile as soon as we're done with the rename.
-			if (e.IsResource && e.Content.Is<Pixmap>())
+			if (!e.IsDirectory && e.Content.Is<Pixmap>())
 			{
 				List<Tileset> affectedTilesets = new List<Tileset>();
 				affectedTilesets.AddRange(this.GetRecompileTilesets(e.OldContent.As<Pixmap>()));

@@ -7,12 +7,8 @@ using System.Xml.Linq;
 using AdamsLair.WinForms.ItemModels;
 
 using Duality;
-using Duality.Components;
-using Duality.Components.Renderers;
-using Duality.Components.Diagnostics;
-using Duality.Components.Physics;
+using Duality.IO;
 using Duality.Resources;
-using Duality.Properties;
 using TextRenderer = Duality.Components.Renderers.TextRenderer;
 
 using Duality.Editor;
@@ -89,7 +85,7 @@ namespace Duality.Editor.Plugins.Base
 				}
 			});
 
-			FileEventManager.ResourceModified += this.FileEventManager_ResourceChanged;
+			FileEventManager.ResourcesChanged += this.FileEventManager_ResourcesChanged;
 			DualityEditorApp.ObjectPropertyChanged += this.DualityEditorApp_ObjectPropertyChanged;
 		}
 		protected override void SaveUserData(XElement node)
@@ -149,9 +145,18 @@ namespace Duality.Editor.Plugins.Base
 			DualityEditorApp.Select(this, new ObjectSelection(new [] { DualityApp.UserData }));
 		}
 
-		private void FileEventManager_ResourceChanged(object sender, ResourceEventArgs e)
+		private void FileEventManager_ResourcesChanged(object sender, ResourceFilesChangedEventArgs e)
 		{
-			if (e.IsResource) this.OnResourceModified(e.Content);
+			if (e.AnyFiles(FileEventType.Changed))
+			{
+				foreach (FileEvent item in e.FileEvents)
+				{
+					if (item.IsDirectory) continue;
+					if (item.Type != FileEventType.Changed) continue;
+
+					this.OnResourceModified(new ContentRef<Resource>(item.Path));
+				}
+			}
 		}
 		private void DualityEditorApp_ObjectPropertyChanged(object sender, ObjectPropertyChangedEventArgs e)
 		{

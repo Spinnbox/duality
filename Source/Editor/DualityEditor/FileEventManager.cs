@@ -32,16 +32,13 @@ namespace Duality.Editor
 		private static HashSet<string>   reimportSchedule        = new HashSet<string>();
 		private static HashSet<string>   editorModifiedFiles     = new HashSet<string>();
 		private static HashSet<string>   editorModifiedFilesLast = new HashSet<string>();
-		private static FileEventQueue    dataDirEventBuffer      = new FileEventQueue();
-		private static FileEventQueue    sourceDirEventBuffer    = new FileEventQueue();
+		private static FileEventQueue    dataDirEventQueue       = new FileEventQueue();
+		private static FileEventQueue    sourceDirEventQueue     = new FileEventQueue();
 
 
-		public static event EventHandler<ResourceEventArgs>          ResourceCreated   = null;
-		public static event EventHandler<ResourceEventArgs>          ResourceDeleted   = null;
-		public static event EventHandler<ResourceEventArgs>          ResourceModified  = null;
-		public static event EventHandler<ResourceRenamedEventArgs>   ResourceRenamed   = null;
-		public static event EventHandler<FileSystemEventArgs>        PluginChanged     = null;
-		public static event EventHandler<BeginGlobalRenameEventArgs> BeginGlobalRename = null;
+		public static event EventHandler<ResourceFilesChangedEventArgs> ResourcesChanged  = null;
+		public static event EventHandler<FileSystemEventArgs>           PluginChanged     = null;
+		public static event EventHandler<BeginGlobalRenameEventArgs>    BeginGlobalRename = null;
 		
 		
 		internal static void Init()
@@ -207,29 +204,30 @@ namespace Duality.Editor
 
 			// Translate the file system watcher event into our own data structure
 			FileEvent fileEvent = TranslateFileEvent(e, isDirectory);
-			dataDirEventBuffer.Add(fileEvent);
+			dataDirEventQueue.Add(fileEvent);
 		}
-		private static void ProcessDataDirEvents()
+		private static void ProcessDataDirEvents(FileEventQueue eventQueue)
 		{
 			// Filter out events we don't want to process in the editor
-			dataDirEventBuffer.ApplyFilter(EditorDataEventFilter);
-			if (dataDirEventBuffer.IsEmpty) return;
+			eventQueue.ApplyFilter(EditorDataEventFilter);
+			if (eventQueue.IsEmpty) return;
 
 			// System internal event processing / do all the low-level stuff
-			HandleDataDirEvents(dataDirEventBuffer);
+			HandleDataDirEvents(eventQueue);
 
 			// Fire editor-wide events to allow plugins and editor modules to react
-			InvokeGlobalDataDirEventHandlers(dataDirEventBuffer);
+			if (ResourcesChanged != null)
+				ResourcesChanged(null, new ResourceFilesChangedEventArgs(eventQueue));
 
 			// Handled all events, start over with an empty buffer
-			dataDirEventBuffer.Clear();
+			eventQueue.Clear();
 		}
 		private static void HandleDataDirEvents(FileEventQueue eventQueue)
 		{
 			// Handle each event according to its type
 			List<FileEvent> renameEventBuffer = null;
 			HashSet<string> sourceMediaDeleteSchedule = null;
-			foreach (FileEvent fileEvent in dataDirEventBuffer.Items)
+			foreach (FileEvent fileEvent in eventQueue.Items)
 			{
 				if (fileEvent.Type == FileEventType.Changed)
 				{
@@ -339,7 +337,7 @@ namespace Duality.Editor
 					fileEvent.OldPath,
 					fileEvent.IsDirectory);
 				BeginGlobalRename(null, beginGlobalRenameArgs);
-				isSkippedPath = beginGlobalRenameArgs.Cancel;
+				isSkippedPath = beginGlobalRenameArgs.IsCancelled;
 			}
 
 			if (!isSkippedPath)
@@ -356,33 +354,6 @@ namespace Duality.Editor
 				MoveSourceMediaFile(fileEvent, oldMediaPaths);
 			}
 		}
-		private static void InvokeGlobalDataDirEventHandlers(FileEventQueue eventQueue)
-		{
-			foreach (FileEvent fileEvent in dataDirEventBuffer.Items)
-			{
-				// Fire events
-				if (fileEvent.Type == FileEventType.Changed)
-				{
-					if (ResourceModified != null)
-						ResourceModified(null, new ResourceEventArgs(fileEvent.Path, fileEvent.IsDirectory));
-				}
-				else if (fileEvent.Type == FileEventType.Created)
-				{
-					if (ResourceCreated != null)
-						ResourceCreated(null, new ResourceEventArgs(fileEvent.Path, fileEvent.IsDirectory));
-				}
-				else if (fileEvent.Type == FileEventType.Deleted)
-				{
-					if (ResourceDeleted != null)
-						ResourceDeleted(null, new ResourceEventArgs(fileEvent.Path, fileEvent.IsDirectory));
-				}
-				else if (fileEvent.Type == FileEventType.Renamed)
-				{
-					if (ResourceRenamed != null)
-						ResourceRenamed(null, new ResourceRenamedEventArgs(fileEvent.Path, fileEvent.OldPath, fileEvent.IsDirectory));
-				}
-			}
-		}
 
 		private static void PushSourceDirEvent(FileSystemEventArgs e)
 		{
@@ -390,16 +361,16 @@ namespace Duality.Editor
 
 			// Translate the file system watcher event into our own data structure
 			FileEvent fileEvent = TranslateFileEvent(e, Directory.Exists(e.FullPath));
-			sourceDirEventBuffer.Add(fileEvent);
+			sourceDirEventQueue.Add(fileEvent);
 		}
-		private static void ProcessSourceDirEvents()
+		private static void ProcessSourceDirEvents(FileEventQueue eventQueue)
 		{
 			// Filter out events we don't want to process in the editor
-			sourceDirEventBuffer.ApplyFilter(EditorSourceEventFilter);
-			if (sourceDirEventBuffer.IsEmpty) return;
+			eventQueue.ApplyFilter(EditorSourceEventFilter);
+			if (eventQueue.IsEmpty) return;
 
 			// Process events
-			foreach (FileEvent fileEvent in sourceDirEventBuffer.Items)
+			foreach (FileEvent fileEvent in eventQueue.Items)
 			{
 				// Mind modified source files for re-import
 				if (fileEvent.Type == FileEventType.Changed)
@@ -410,7 +381,7 @@ namespace Duality.Editor
 			}
 
 			// Handled all events, start over with an empty buffer
-			sourceDirEventBuffer.Clear();
+			eventQueue.Clear();
 		}
 
 		public static void FlagPathEditorModified(string path)
@@ -531,8 +502,8 @@ namespace Duality.Editor
 			// Process file / source events regularily, if no modal dialog is open.
 			if ((DateTime.Now - lastEventProc).TotalMilliseconds > 100.0d)
 			{
-				ProcessSourceDirEvents();
-				ProcessDataDirEvents();
+				ProcessSourceDirEvents(sourceDirEventQueue);
+				ProcessDataDirEvents(dataDirEventQueue);
 
 				// Manage the list of editor-modified files to be ignored in a 
 				// two-pass process, so event order doesn't matter.
