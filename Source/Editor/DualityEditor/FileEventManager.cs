@@ -157,7 +157,15 @@ namespace Duality.Editor
 		}
 
 
-		private static bool EditorEventFilter(FileEvent fileEvent)
+		private static bool EditorSourceEventFilter(FileEvent fileEvent)
+		{
+			// Filter out changes made by the editor itself
+			if (fileEvent.Type == FileEventType.Changed && IsPathEditorModified(fileEvent.Path))
+				return true;
+
+			return false;
+		}
+		private static bool EditorDataEventFilter(FileEvent fileEvent)
 		{
 			// Filter out changes made by the editor itself
 			if (fileEvent.Type == FileEventType.Changed && IsPathEditorModified(fileEvent.Path))
@@ -204,7 +212,7 @@ namespace Duality.Editor
 		private static void ProcessDataDirEvents()
 		{
 			// Filter out events we don't want to process in the editor
-			dataDirEventBuffer.ApplyFilter(EditorEventFilter);
+			dataDirEventBuffer.ApplyFilter(EditorDataEventFilter);
 			if (dataDirEventBuffer.IsEmpty) return;
 
 			// System internal event processing / do all the low-level stuff
@@ -387,11 +395,11 @@ namespace Duality.Editor
 		private static void ProcessSourceDirEvents()
 		{
 			// Filter out events we don't want to process in the editor
-			sourceDirEventBuffer.ApplyFilter(EditorEventFilter);
+			sourceDirEventBuffer.ApplyFilter(EditorSourceEventFilter);
 			if (sourceDirEventBuffer.IsEmpty) return;
 
 			// Process events
-			foreach (FileEvent fileEvent in dataDirEventBuffer.Items)
+			foreach (FileEvent fileEvent in sourceDirEventBuffer.Items)
 			{
 				// Mind modified source files for re-import
 				if (fileEvent.Type == FileEventType.Changed)
