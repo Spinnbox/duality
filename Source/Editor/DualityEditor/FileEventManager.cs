@@ -38,6 +38,7 @@ namespace Duality.Editor
 
 
 		public static event EventHandler<ResourceFilesChangedEventArgs> ResourcesChanged  = null;
+		public static event EventHandler<FileSystemChangedEventArgs>    SourcesChanged    = null;
 		public static event EventHandler<FileSystemChangedEventArgs>    PluginsChanged    = null;
 		public static event EventHandler<BeginGlobalRenameEventArgs>    BeginGlobalRename = null;
 		
@@ -386,6 +387,10 @@ namespace Duality.Editor
 						reimportSchedule.Add(fileEvent.Path);
 				}
 			}
+
+			// Fire an editor-wide event to allow reacting to source changes and re-importing resources
+			if (SourcesChanged != null)
+				SourcesChanged(null, new FileSystemChangedEventArgs(eventQueue));
 
 			// Handled all events, start over with an empty buffer
 			eventQueue.Clear();
