@@ -83,12 +83,15 @@ namespace Duality.IO
 						consumedPrev = true;
 					}
 					// Aggregate "delete Foo/A, create Bar/A" to "rename Foo/A to Bar/A" events.
+					// Aggregate "delete Foo/A, create Foo/A" to "change Foo/A" events.
 					else if (
 						current.Type == FileEventType.Created &&
 						prev.Type == FileEventType.Deleted &&
 						currentFileName == prevFileName)
 					{
-						current.Type = FileEventType.Renamed;
+						current.Type = (current.Path == prev.Path) ? 
+							FileEventType.Changed : 
+							FileEventType.Renamed;
 						current.OldPath = prev.Path;
 						consumedPrev = true;
 					}
@@ -164,7 +167,6 @@ namespace Duality.IO
 					current.OldPath == current.Path)
 				{
 					discardedCurrent = true;
-					this.items.RemoveAt(currentIndex);
 				}
 
 				// Discard or update the current event

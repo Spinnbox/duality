@@ -92,6 +92,8 @@ namespace Duality.Tests.IO
 			List<FileEvent> inputEvents = new List<FileEvent>();
 			inputEvents.Add(new FileEvent(FileEventType.Deleted, "Foo\\A", false));
 			inputEvents.Add(new FileEvent(FileEventType.Created, "Bar\\A", false));
+			inputEvents.Add(new FileEvent(FileEventType.Deleted, "Foo\\B", false));
+			inputEvents.Add(new FileEvent(FileEventType.Created, "Foo\\B", false));
 
 			// Create a queue and add events in order
 			FileEventQueue queue = new FileEventQueue();
@@ -100,9 +102,11 @@ namespace Duality.Tests.IO
 				queue.Add(item);
 			}
 
-			// Assert that the queue merges a delete-create using the same file name into a rename
+			// Assert that the queue merges a delete-create using the same file name into a rename,
+			// and using the same path into a change.
 			List<FileEvent> outputEvents = new List<FileEvent>();
 			outputEvents.Add(new FileEvent(FileEventType.Renamed, "Foo\\A", "Bar\\A", false));
+			outputEvents.Add(new FileEvent(FileEventType.Changed, "Foo\\B", false));
 			CollectionAssert.AreEqual(outputEvents, queue.Items);
 		}
 		[Test] public void AggregateDeleteRenameInto()
@@ -126,6 +130,25 @@ namespace Duality.Tests.IO
 			CollectionAssert.AreEqual(outputEvents, queue.Items);
 		}
 
+		[Test] public void DiscardNopRenameIntoSelf()
+		{
+			List<FileEvent> inputEvents = new List<FileEvent>();
+			inputEvents.Add(new FileEvent(FileEventType.Changed, "Foo\\A", false));
+			inputEvents.Add(new FileEvent(FileEventType.Renamed, "Foo\\A", "Foo\\A", false));
+			inputEvents.Add(new FileEvent(FileEventType.Renamed, "Foo\\B", "Foo\\B", false));
+
+			// Create a queue and add events in order
+			FileEventQueue queue = new FileEventQueue();
+			foreach (FileEvent item in inputEvents)
+			{
+				queue.Add(item);
+			}
+
+			// Assert that we discard all rename events that have the same old and new path.
+			List<FileEvent> outputEvents = new List<FileEvent>();
+			outputEvents.Add(new FileEvent(FileEventType.Changed, "Foo\\A", false));
+			CollectionAssert.AreEqual(outputEvents, queue.Items);
+		}
 		[Test] public void DiscardAnythingBeforeDelete()
 		{
 			List<FileEvent> inputEvents = new List<FileEvent>();
