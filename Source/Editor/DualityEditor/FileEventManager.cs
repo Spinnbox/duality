@@ -34,10 +34,11 @@ namespace Duality.Editor
 		private static HashSet<string>   editorModifiedFilesLast = new HashSet<string>();
 		private static FileEventQueue    dataDirEventQueue       = new FileEventQueue();
 		private static FileEventQueue    sourceDirEventQueue     = new FileEventQueue();
+		private static FileEventQueue    pluginDirEventQueue     = new FileEventQueue();
 
 
 		public static event EventHandler<ResourceFilesChangedEventArgs> ResourcesChanged  = null;
-		public static event EventHandler<FileSystemEventArgs>           PluginChanged     = null;
+		public static event EventHandler<FileSystemChangedEventArgs>    PluginsChanged    = null;
 		public static event EventHandler<BeginGlobalRenameEventArgs>    BeginGlobalRename = null;
 		
 		
@@ -51,12 +52,13 @@ namespace Duality.Editor
 			pluginWatcherWorking.IncludeSubdirectories = true;
 			pluginWatcherWorking.NotifyFilter = NotifyFilters.LastWrite;
 			pluginWatcherWorking.Path = DualityApp.PluginDirectory;
-			pluginWatcherWorking.Changed += corePluginWatcher_Changed;
-			pluginWatcherWorking.Created += corePluginWatcher_Changed;
+			pluginWatcherWorking.Changed += fileSystemWatcher_ForwardPlugin;
+			pluginWatcherWorking.Created += fileSystemWatcher_ForwardPlugin;
 			pluginWatcherWorking.EnableRaisingEvents = true;
 
 			string execPluginDir = Path.Combine(PathHelper.ExecutingAssemblyDir, DualityApp.PluginDirectory);
-			if (Path.GetFullPath(execPluginDir).ToLower() != Path.GetFullPath(DualityApp.PluginDirectory).ToLower() && Directory.Exists(execPluginDir))
+			bool hasSeparateExecPluginDir = !PathOp.ArePathsEqual(execPluginDir, DualityApp.PluginDirectory);
+			if (hasSeparateExecPluginDir && Directory.Exists(execPluginDir))
 			{
 				pluginWatcherExec = new FileSystemWatcher();
 				pluginWatcherExec.SynchronizingObject = DualityEditorApp.MainForm;
@@ -65,8 +67,8 @@ namespace Duality.Editor
 				pluginWatcherExec.IncludeSubdirectories = true;
 				pluginWatcherExec.NotifyFilter = NotifyFilters.LastWrite;
 				pluginWatcherExec.Path = execPluginDir;
-				pluginWatcherExec.Changed += corePluginWatcher_Changed;
-				pluginWatcherExec.Created += corePluginWatcher_Changed;
+				pluginWatcherExec.Changed += fileSystemWatcher_ForwardPlugin;
+				pluginWatcherExec.Created += fileSystemWatcher_ForwardPlugin;
 				pluginWatcherExec.EnableRaisingEvents = true;
 			}
 			
@@ -119,8 +121,8 @@ namespace Duality.Editor
 
 			// Destroy file system watchers
 			pluginWatcherWorking.EnableRaisingEvents = false;
-			pluginWatcherWorking.Changed -= corePluginWatcher_Changed;
-			pluginWatcherWorking.Created -= corePluginWatcher_Changed;
+			pluginWatcherWorking.Changed -= fileSystemWatcher_ForwardPlugin;
+			pluginWatcherWorking.Created -= fileSystemWatcher_ForwardPlugin;
 			pluginWatcherWorking.SynchronizingObject = null;
 			pluginWatcherWorking.Dispose();
 			pluginWatcherWorking = null;
@@ -154,14 +156,6 @@ namespace Duality.Editor
 		}
 
 
-		private static bool EditorSourceEventFilter(FileEvent fileEvent)
-		{
-			// Filter out changes made by the editor itself
-			if (fileEvent.Type == FileEventType.Changed && IsPathEditorModified(fileEvent.Path))
-				return true;
-
-			return false;
-		}
 		private static bool EditorDataEventFilter(FileEvent fileEvent)
 		{
 			// Filter out changes made by the editor itself
@@ -170,6 +164,23 @@ namespace Duality.Editor
 
 			// Skip everything that isn't either a Resource or a directory
 			if (!Resource.IsResourceFile(fileEvent.Path) && !fileEvent.IsDirectory)
+				return true;
+
+			return false;
+		}
+		private static bool EditorSourceEventFilter(FileEvent fileEvent)
+		{
+			// Filter out changes made by the editor itself
+			if (fileEvent.Type == FileEventType.Changed && IsPathEditorModified(fileEvent.Path))
+				return true;
+
+			return false;
+		}
+		private static bool EditorPluginEventFilter(FileEvent fileEvent)
+		{
+			// Filter out class libraries that clearly aren't plugins
+			if (!fileEvent.Path.EndsWith(".core.dll", StringComparison.InvariantCultureIgnoreCase) &&
+				!fileEvent.Path.EndsWith(".editor.dll", StringComparison.InvariantCultureIgnoreCase))
 				return true;
 
 			return false;
@@ -197,15 +208,19 @@ namespace Duality.Editor
 
 			return fileEvent;
 		}
-
-		private static void PushDataDirEvent(FileSystemEventArgs e, bool isDirectory)
+		private static void PushFileEvent(FileEventQueue queue, FileSystemEventArgs watcherEvent, bool isDirectory)
 		{
-			if (!PathHelper.IsPathVisible(e.FullPath)) return;
+			// Do not track hidden paths
+			if (!PathHelper.IsPathVisible(watcherEvent.FullPath)) return;
 
 			// Translate the file system watcher event into our own data structure
-			FileEvent fileEvent = TranslateFileEvent(e, isDirectory);
-			dataDirEventQueue.Add(fileEvent);
+			FileEvent fileEvent = TranslateFileEvent(
+				watcherEvent,
+				isDirectory);
+
+			queue.Add(fileEvent);
 		}
+
 		private static void ProcessDataDirEvents(FileEventQueue eventQueue)
 		{
 			// Filter out events we don't want to process in the editor
@@ -215,7 +230,7 @@ namespace Duality.Editor
 			// System internal event processing / do all the low-level stuff
 			HandleDataDirEvents(eventQueue);
 
-			// Fire editor-wide events to allow plugins and editor modules to react
+			// Fire an editor-wide event to allow plugins and editor modules to react
 			if (ResourcesChanged != null)
 				ResourcesChanged(null, new ResourceFilesChangedEventArgs(eventQueue));
 
@@ -355,14 +370,6 @@ namespace Duality.Editor
 			}
 		}
 
-		private static void PushSourceDirEvent(FileSystemEventArgs e)
-		{
-			if (!PathHelper.IsPathVisible(e.FullPath)) return;
-
-			// Translate the file system watcher event into our own data structure
-			FileEvent fileEvent = TranslateFileEvent(e, Directory.Exists(e.FullPath));
-			sourceDirEventQueue.Add(fileEvent);
-		}
 		private static void ProcessSourceDirEvents(FileEventQueue eventQueue)
 		{
 			// Filter out events we don't want to process in the editor
@@ -379,6 +386,19 @@ namespace Duality.Editor
 						reimportSchedule.Add(fileEvent.Path);
 				}
 			}
+
+			// Handled all events, start over with an empty buffer
+			eventQueue.Clear();
+		}
+		private static void ProcessPluginDirEvents(FileEventQueue eventQueue)
+		{
+			// Filter out events we don't want to process in the editor
+			eventQueue.ApplyFilter(EditorPluginEventFilter);
+			if (eventQueue.IsEmpty) return;
+
+			// Fire an editor-wide event to allow scheduling a plugin reload
+			if (PluginsChanged != null)
+				PluginsChanged(null, new FileSystemChangedEventArgs(eventQueue));
 
 			// Handled all events, start over with an empty buffer
 			eventQueue.Clear();
@@ -504,6 +524,7 @@ namespace Duality.Editor
 			{
 				ProcessSourceDirEvents(sourceDirEventQueue);
 				ProcessDataDirEvents(dataDirEventQueue);
+				ProcessPluginDirEvents(pluginDirEventQueue);
 
 				// Manage the list of editor-modified files to be ignored in a 
 				// two-pass process, so event order doesn't matter.
@@ -541,23 +562,17 @@ namespace Duality.Editor
 				AssetManager.ReImportAssets(existingReImportFiles);
 			}
 		}
-		private static void fileSystemWatcher_ForwardSource(object sender, FileSystemEventArgs e)
-		{
-			PushSourceDirEvent(e);
-		}
 		private static void fileSystemWatcher_ForwardData(object sender, FileSystemEventArgs e)
 		{
-			PushDataDirEvent(e, sender == dataDirWatcherDirectory);
+			PushFileEvent(dataDirEventQueue, e, sender == dataDirWatcherDirectory);
 		}
-		private static void corePluginWatcher_Changed(object sender, FileSystemEventArgs e)
+		private static void fileSystemWatcher_ForwardSource(object sender, FileSystemEventArgs e)
 		{
-			// Ignore other class libraries that clearly aren't plugins
-			if (!e.FullPath.EndsWith(".core.dll", StringComparison.InvariantCultureIgnoreCase) &&
-				!e.FullPath.EndsWith(".editor.dll", StringComparison.InvariantCultureIgnoreCase))
-				return;
-
-			if (PluginChanged != null)
-				PluginChanged(sender, e);
+			PushFileEvent(sourceDirEventQueue, e, Directory.Exists(e.FullPath));
+		}
+		private static void fileSystemWatcher_ForwardPlugin(object sender, FileSystemEventArgs e)
+		{
+			PushFileEvent(pluginDirEventQueue, e, Directory.Exists(e.FullPath));
 		}
 
 		private static System.Collections.IEnumerable async_RenameContentRefs(ProcessingBigTaskDialog.WorkerInterface state)

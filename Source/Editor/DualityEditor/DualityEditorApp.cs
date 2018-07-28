@@ -260,7 +260,7 @@ namespace Duality.Editor
 			Resource.ResourceDisposing += Resource_ResourceDisposing;
 			Resource.ResourceSaved += Resource_ResourceSaved;
 			Resource.ResourceSaving += Resource_ResourceSaving;
-			FileEventManager.PluginChanged += FileEventManager_PluginChanged;
+			FileEventManager.PluginsChanged += FileEventManager_PluginsChanged;
 			editorObjects.GameObjectsAdded += editorObjects_GameObjectsAdded;
 			editorObjects.GameObjectsRemoved += editorObjects_GameObjectsRemoved;
 			editorObjects.ComponentAdded += editorObjects_ComponentAdded;
@@ -356,7 +356,7 @@ namespace Duality.Editor
 			Resource.ResourceSaved -= Resource_ResourceSaved;
 			Resource.ResourceSaving -= Resource_ResourceSaving;
 			Resource.ResourceDisposing -= Resource_ResourceDisposing;
-			FileEventManager.PluginChanged -= FileEventManager_PluginChanged;
+			FileEventManager.PluginsChanged -= FileEventManager_PluginsChanged;
 			editorObjects.GameObjectsAdded -= editorObjects_GameObjectsAdded;
 			editorObjects.GameObjectsRemoved -= editorObjects_GameObjectsRemoved;
 			editorObjects.ComponentAdded -= editorObjects_ComponentAdded;
@@ -1500,12 +1500,15 @@ namespace Duality.Editor
 			}
 		}
 
-		private static void FileEventManager_PluginChanged(object sender, FileSystemEventArgs e)
+		private static void FileEventManager_PluginsChanged(object sender, FileSystemChangedEventArgs e)
 		{
-			if (!corePluginReloader.ReloadSchedule.Contains(e.FullPath))
+			foreach (FileEvent fileEvent in e.FileEvents)
 			{
-				corePluginReloader.ReloadSchedule.Add(e.FullPath);
-				DualityApp.AppData.Version++;
+				if (!corePluginReloader.ReloadSchedule.Contains(fileEvent.Path))
+				{
+					corePluginReloader.ReloadSchedule.Add(fileEvent.Path);
+					DualityApp.AppData.Version++;
+				}
 			}
 			corePluginReloader.State = ReloadCorePluginDialog.ReloaderState.WaitForPlugins;
 		}
