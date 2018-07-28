@@ -43,6 +43,16 @@ namespace Duality.Editor
 		public static event EventHandler<BeginGlobalRenameEventArgs>    BeginGlobalRename = null;
 		
 		
+		/// <summary>
+		/// Whether any asset re-imports are pending and will be processed on the 
+		/// next <see cref="ProcessPendingReImports"/> call.
+		/// </summary>
+		public static bool HasPendingReImports
+		{
+			get { return reimportSchedule.Count > 0; }
+		}
+
+
 		internal static void Init()
 		{
 			// Set up different file system watchers
@@ -109,14 +119,12 @@ namespace Duality.Editor
 			sourceDirWatcher.EnableRaisingEvents = true;
 
 			// Register events
-			DualityEditorApp.MainForm.Activated += mainForm_Activated;
 			DualityEditorApp.EditorIdling += DualityEditorApp_EditorIdling;
 			Resource.ResourceSaved += Resource_ResourceSaved;
 		}
 		internal static void Terminate()
 		{
 			// Unregister events
-			DualityEditorApp.MainForm.Activated -= mainForm_Activated;
 			DualityEditorApp.EditorIdling -= DualityEditorApp_EditorIdling;
 			Resource.ResourceSaved -= Resource_ResourceSaved;
 
@@ -156,6 +164,69 @@ namespace Duality.Editor
 			sourceDirWatcher = null;
 		}
 
+		/// <summary>
+		/// Immediately processes any pending file system events and triggers their public events.
+		/// This is usually done automatically by the editor and doesn't need to be called explicitly.
+		/// </summary>
+		public static void ProcessEvents()
+		{
+			ProcessSourceDirEvents(sourceDirEventQueue);
+			ProcessDataDirEvents(dataDirEventQueue);
+			ProcessPluginDirEvents(pluginDirEventQueue);
+
+			// Manage the list of editor-modified files to be ignored in a 
+			// two-pass process, so event order doesn't matter.
+			{
+				// Remove the ones that were known last time
+				foreach (string file in editorModifiedFilesLast)
+					editorModifiedFiles.Remove(file);
+
+				// Mind the ones that are known right now
+				editorModifiedFilesLast.Clear();
+				foreach (string file in editorModifiedFiles)
+					editorModifiedFilesLast.Add(file);
+			}
+		}
+		/// <summary>
+		/// Processes any pending asset re-import operations that were scheduled due to source file changes.
+		/// Will do nothing when <see cref="HasPendingReImports"/> is false.
+		/// </summary>
+		public static void ProcessPendingReImports()
+		{
+			if (reimportSchedule.Count == 0) return;
+
+			// Gather valid scheduled source files
+			string[] existingReImportFiles = reimportSchedule
+				.Where(path => File.Exists(path))
+				.ToArray();
+			reimportSchedule.Clear();
+
+			// Perform scheduled source file reimports
+			AssetManager.ReImportAssets(existingReImportFiles);
+		}
+
+		/// <summary>
+		/// Flags the specified path as recently modified by an editor operation and 
+		/// thus to be ignored when detecing file system changes.
+		/// </summary>
+		/// <param name="path"></param>
+		public static void FlagPathEditorModified(string path)
+		{
+			if (string.IsNullOrEmpty(path)) return; // Ignore bad paths
+			string fullPath = Path.GetFullPath(path);
+			editorModifiedFiles.Add(fullPath);
+			editorModifiedFilesLast.Remove(fullPath);
+		}
+		/// <summary>
+		/// Returns whether the specified path is currently flagged as modified by the editor and 
+		/// thus to be ignored when detecing file system changes.
+		/// </summary>
+		/// <param name="path"></param>
+		/// <returns></returns>
+		public static bool IsPathEditorModified(string path)
+		{
+			return editorModifiedFiles.Contains(Path.GetFullPath(path));
+		}
 
 		private static bool EditorDataEventFilter(FileEvent fileEvent)
 		{
@@ -409,17 +480,6 @@ namespace Duality.Editor
 			eventQueue.Clear();
 		}
 
-		public static void FlagPathEditorModified(string path)
-		{
-			if (string.IsNullOrEmpty(path)) return; // Ignore bad paths
-			string fullPath = Path.GetFullPath(path);
-			editorModifiedFiles.Add(fullPath);
-			editorModifiedFilesLast.Remove(fullPath);
-		}
-		private static bool IsPathEditorModified(string path)
-		{
-			return editorModifiedFiles.Contains(Path.GetFullPath(path));
-		}
 		private static void GetDeleteSourceMediaFilePaths(FileEvent deleteEvent, ICollection<string> deletePathSchedule)
 		{
 			if (!deleteEvent.IsDirectory)
@@ -527,23 +587,7 @@ namespace Duality.Editor
 			// Process file / source events regularily, if no modal dialog is open.
 			if ((DateTime.Now - lastEventProc).TotalMilliseconds > 100.0d)
 			{
-				ProcessSourceDirEvents(sourceDirEventQueue);
-				ProcessDataDirEvents(dataDirEventQueue);
-				ProcessPluginDirEvents(pluginDirEventQueue);
-
-				// Manage the list of editor-modified files to be ignored in a 
-				// two-pass process, so event order doesn't matter.
-				{
-					// Remove the ones that were known last time
-					foreach (string file in editorModifiedFilesLast)
-						editorModifiedFiles.Remove(file);
-
-					// Mind the ones that are known right now
-					editorModifiedFilesLast.Clear();
-					foreach (string file in editorModifiedFiles)
-						editorModifiedFilesLast.Add(file);
-				}
-
+				ProcessEvents();
 				lastEventProc = DateTime.Now;
 			}
 		}
@@ -552,21 +596,6 @@ namespace Duality.Editor
 			FlagPathEditorModified(e.SaveAsPath);
 		}
 		
-		private static void mainForm_Activated(object sender, EventArgs e)
-		{
-			// Perform scheduled source file reimports
-			if (reimportSchedule.Count > 0)
-			{
-				// Hacky: Wait a little for the files to be accessable again (Might be used by another process)
-				System.Threading.Thread.Sleep(50);
-
-				string[] existingReImportFiles = reimportSchedule
-					.Where(path => File.Exists(path))
-					.ToArray();
-				reimportSchedule.Clear();
-				AssetManager.ReImportAssets(existingReImportFiles);
-			}
-		}
 		private static void fileSystemWatcher_ForwardData(object sender, FileSystemEventArgs e)
 		{
 			PushFileEvent(dataDirEventQueue, e, sender == dataDirWatcherDirectory);

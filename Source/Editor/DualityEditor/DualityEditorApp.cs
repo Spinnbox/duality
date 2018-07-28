@@ -1432,6 +1432,13 @@ namespace Duality.Editor
 			{
 				corePluginReloader.State = ReloadCorePluginDialog.ReloaderState.ReloadPlugins;
 			}
+			// Asset re-import after detected source file changes
+			else if (FileEventManager.HasPendingReImports)
+			{
+				// Hacky: Wait a little for the files to be accessable again (Might be used by another process)
+				System.Threading.Thread.Sleep(50);
+				FileEventManager.ProcessPendingReImports();
+			}
 		}
 		private static void mainForm_Deactivate(object sender, EventArgs e)
 		{
