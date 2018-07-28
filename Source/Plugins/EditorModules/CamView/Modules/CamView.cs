@@ -1386,8 +1386,11 @@ namespace Duality.Editor.Plugins.CamView
 		}
 		private void DualityEditorApp_ObjectPropertyChanged(object sender, ObjectPropertyChangedEventArgs e)
 		{
-			if (!e.Objects.Resources.Any() && !e.Objects.OfType<DesignTimeObjectData>().Any()) return;
-			this.RenderableControl.Invalidate();
+			// Redraw (at least) whenever any Resource or design-time data changes.
+			if (e.Objects.Resources.Any() || e.Objects.OfType<DesignTimeObjectData>().Any())
+			{
+				this.RenderableControl.Invalidate();
+			}
 		}
 		private void DualityEditorApp_UpdatingEngine(object sender, EventArgs e)
 		{

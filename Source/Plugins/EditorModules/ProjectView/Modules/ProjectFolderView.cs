@@ -1255,7 +1255,8 @@ namespace Duality.Editor.Plugins.ProjectView
 			string conflictPath;
 			if (!node.ApplyNameToPath(out conflictPath))
 			{
-				if (NodeBase.GetNodePathId(conflictPath) != node.NodePathId) this.DisplayErrorRenameFile(conflictPath);
+				if (conflictPath != null && NodeBase.GetNodePathId(conflictPath) != node.NodePathId)
+					this.DisplayErrorRenameFile(conflictPath);
 				node.Text = null;
 				node.ApplyPathToName();
 			}
