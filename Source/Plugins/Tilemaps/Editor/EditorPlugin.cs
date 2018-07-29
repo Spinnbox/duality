@@ -108,7 +108,6 @@ namespace Duality.Editor.Plugins.Tilemaps
 			});
 
 			// Register events
-			FileEventManager.ResourcesChanged += this.FileEventManager_ResourcesChanged;
 			FileEventManager.BeginGlobalRename += this.FileEventManager_BeginGlobalRename;
 			DualityEditorApp.ObjectPropertyChanged += this.DualityEditorApp_ObjectPropertyChanged;
 		}
@@ -307,27 +306,12 @@ namespace Duality.Editor.Plugins.Tilemaps
 			}
 		}
 		
-		private void FileEventManager_ResourcesChanged(object sender, ResourceFilesChangedEventArgs e)
-		{
-			if (e.AnyFiles(FileEventType.Created | FileEventType.Deleted | FileEventType.Changed | FileEventType.Renamed))
-			{
-				foreach (FileEvent item in e.FileEvents)
-				{
-					if (item.IsDirectory) continue;
-
-					// Only invoke our modified handler for the new content path, not the previous
-					// one, i.e. renaming an unknown Pixmap so that it now matches a Tileset's
-					// source path. The other case, where it matched the source path already, is
-					// dealt with in our BeginGlobalRename handler, since we need to act only
-					// AFTER the global rename has fixed all references.
-					this.OnResourceModified(new ContentRef<Resource>(item.Path));
-				}
-			}
-		}
 		private void FileEventManager_BeginGlobalRename(object sender, BeginGlobalRenameEventArgs e)
 		{
 			// If we're doing a global rename on a Pixmap, schedule affected Tilemaps
 			// for an automatic recompile as soon as we're done with the rename.
+			// This will deal with cases where renaming an unrelated Pixmap into one
+			// that is referenced by a Tileset, but missing, so the Tileset updates.
 			if (!e.IsDirectory && e.Content.Is<Pixmap>())
 			{
 				List<Tileset> affectedTilesets = new List<Tileset>();
@@ -343,14 +327,24 @@ namespace Duality.Editor.Plugins.Tilemaps
 		{
 			if (e.Objects.ResourceCount > 0)
 			{
+				List<object> modifiedObjects = new List<object>();
 				foreach (Resource resource in e.Objects.Resources)
-					this.OnResourceModified(resource);
+				{
+					this.PropagateDependentResourceChanges(resource, modifiedObjects);
+				}
+
+				// Notify about propagated changes, but flag them as non-persistent
+				if (modifiedObjects.Count > 0)
+				{
+					DualityEditorApp.NotifyObjPropChanged(
+						this,
+						new ObjectSelection(modifiedObjects),
+						false);
+				}
 			}
 		}
-		private void OnResourceModified(ContentRef<Resource> resRef)
+		private void PropagateDependentResourceChanges(ContentRef<Resource> resRef, List<object> modifiedObjects)
 		{
-			List<object> changedObj = null;
-
 			// If a pixmap has been modified, rebuild the tilesets that are based on it.
 			if (resRef.Is<Pixmap>())
 			{
@@ -360,9 +354,7 @@ namespace Duality.Editor.Plugins.Tilemaps
 				{
 					// Recompile the tileset
 					tileset.Compile();
-
-					if (changedObj == null) changedObj = new List<object>();
-					changedObj.Add(tileset);
+					modifiedObjects.Add(tileset);
 				}
 			}
 			// If a Tileset has been modified, we'll need to give local Components a chance to update.
@@ -399,10 +391,6 @@ namespace Duality.Editor.Plugins.Tilemaps
 					}
 				}
 			}
-
-			// Notify a change that isn't critical regarding persistence (don't flag stuff unsaved)
-			if (changedObj != null)
-				DualityEditorApp.NotifyObjPropChanged(this, new ObjectSelection(changedObj as IEnumerable<object>), false);
 		}
 	}
 }

@@ -88,7 +88,6 @@ namespace Duality.Editor.Plugins.ObjectInspector
 			DualityEditorApp.ObjectPropertyChanged += this.DualityEditorApp_ObjectPropertyChanged;
 			DualityEditorApp.Terminating += this.DualityEditorApp_Terminating;
 			AssetManager.ImportFinished += this.AssetManager_ImportFinished;
-			FileEventManager.ResourcesChanged += this.FileEventManager_ResourcesChanged;
 
 			// Select something initially, if not done yet
 			if (this.propertyGrid.Selection.Count() == 0)
@@ -102,7 +101,6 @@ namespace Duality.Editor.Plugins.ObjectInspector
 			DualityEditorApp.ObjectPropertyChanged -= this.DualityEditorApp_ObjectPropertyChanged;
 			DualityEditorApp.Terminating -= this.DualityEditorApp_Terminating;
 			AssetManager.ImportFinished -= this.AssetManager_ImportFinished;
-			FileEventManager.ResourcesChanged -= this.FileEventManager_ResourcesChanged;
 		}
 		protected override void OnGotFocus(EventArgs e)
 		{
@@ -254,16 +252,6 @@ namespace Duality.Editor.Plugins.ObjectInspector
 				e.Objects.Any(o => this.propertyGrid.Selection.Contains(o)) ||
 				(e.Objects.Contains(Scene.Current) && this.propertyGrid.Selection.Any(o => o is GameObject || o is Component)))
 				this.propertyGrid.UpdateFromObjects(100);
-		}
-		private void FileEventManager_ResourcesChanged(object sender, ResourceFilesChangedEventArgs e)
-		{
-			if (!e.AnyFiles(FileEventType.Changed)) return;
-
-			// Force updating all potentially generated previews when we display a resource that was modified externally
-			bool forceFullUpdate = e.Contains(FileEventType.Changed, this.propertyGrid.Selection.OfType<Resource>());
-
-			// But in any case, do an inspector update. It's not that expensive and we're on the safe side.
-			this.UpdateDisplayedValues(forceFullUpdate);
 		}
 		private void AssetManager_ImportFinished(object sender, AssetImportFinishedEventArgs e)
 		{

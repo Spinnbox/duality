@@ -311,6 +311,31 @@ namespace Duality.Editor
 		}
 		private static void HandleDataDirEvents(FileEventQueue eventQueue)
 		{
+			// Gather a list of all externally modified resources that are currently loaded.
+			// We'll use this to later tell the editor about the changes we've applied.
+			List<Resource> modifiedLoadedResources = null;
+			foreach (FileEvent fileEvent in eventQueue.Items)
+			{
+				if (fileEvent.IsDirectory) continue;
+
+				// We're only interested in the path where we would find the Resource right now,
+				// because we need the instance for the change notification
+				string contentPath = (fileEvent.Type == FileEventType.Renamed) ? fileEvent.OldPath : fileEvent.Path;
+				ContentRef<Resource> content = new ContentRef<Resource>(contentPath);
+
+				// Some editor modules rely on change notifications to re-establish links to previously
+				// removed Resources. In order to do that, we'll speculatively load newly arrived Resources
+				// so we can put out a change notification for them.
+				// Note: If ObjectSelection supported ContentRefs, we could improve and do that without the
+				// speculative load, triggering a load only when someone was actually interested.
+				if (content.IsLoaded || fileEvent.Type == FileEventType.Created)
+				{
+					if (modifiedLoadedResources == null)
+						modifiedLoadedResources = new List<Resource>();
+					modifiedLoadedResources.Add(content.Res);
+				}
+			}
+
 			// Handle each event according to its type
 			List<FileEvent> renameEventBuffer = null;
 			HashSet<string> sourceMediaDeleteSchedule = null;
@@ -361,6 +386,15 @@ namespace Duality.Editor
 						async_RenameContentRefs, renameEventBuffer);
 					taskDialog.ShowDialog(DualityEditorApp.MainForm);
 				});
+			}
+
+			// Notify the editor about externally modified resources
+			if (modifiedLoadedResources != null)
+			{
+				DualityEditorApp.NotifyObjPropChanged(
+					null,
+					new ObjectSelection(modifiedLoadedResources),
+					false);
 			}
 		}
 		private static void HandleDataDirChangeEvent(FileEvent fileEvent)

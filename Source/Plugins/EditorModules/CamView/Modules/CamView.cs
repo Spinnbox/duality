@@ -435,7 +435,6 @@ namespace Duality.Editor.Plugins.CamView
 		private void RegisterEditorEvents()
 		{
 			DualityApp.PluginManager.PluginsRemoving += this.PluginManager_PluginsRemoving;
-			FileEventManager.ResourcesChanged        += this.FileEventManager_ResourcesChanged;
 			DualityEditorApp.Terminating             += this.DualityEditorApp_Terminating;
 			DualityEditorApp.HighlightObject         += this.DualityEditorApp_HighlightObject;
 			DualityEditorApp.ObjectPropertyChanged   += this.DualityEditorApp_ObjectPropertyChanged;
@@ -450,7 +449,6 @@ namespace Duality.Editor.Plugins.CamView
 		private void UnregisterEditorEvents()
 		{
 			DualityApp.PluginManager.PluginsRemoving -= this.PluginManager_PluginsRemoving;
-			FileEventManager.ResourcesChanged        -= this.FileEventManager_ResourcesChanged;
 			DualityEditorApp.Terminating             -= this.DualityEditorApp_Terminating;
 			DualityEditorApp.HighlightObject         -= this.DualityEditorApp_HighlightObject;
 			DualityEditorApp.ObjectPropertyChanged   -= this.DualityEditorApp_ObjectPropertyChanged;
@@ -1360,11 +1358,6 @@ namespace Duality.Editor.Plugins.CamView
 			this.RenderableControl.Invalidate();
 		}
 		
-		private void FileEventManager_ResourcesChanged(object sender, ResourceFilesChangedEventArgs e)
-		{
-			if (!e.AnyFiles(FileEventType.Changed)) return;
-			this.RenderableControl.Invalidate();
-		}
 		private void PluginManager_PluginsRemoving(object sender, DualityPluginEventArgs e)
 		{
 			this.objectVisibility.ClearTypeCache();
